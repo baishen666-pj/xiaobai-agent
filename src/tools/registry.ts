@@ -25,6 +25,8 @@ export interface ToolResult {
 export interface ToolContext {
   security: import('../security/manager.js').SecurityManager;
   config: import('../config/manager.js').ConfigManager;
+  memory?: import('../memory/system.js').MemorySystem;
+  sandbox?: import('../sandbox/manager.js').SandboxManager;
 }
 
 export interface Tool {

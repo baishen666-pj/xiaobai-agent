@@ -85,12 +85,12 @@ export class XiaobaiAgent {
     const hooks = new HookSystem(config.getConfigDir());
     const memory = new MemorySystem(config.getConfigDir());
     const security = new SecurityManager(cfg);
+    const sandbox = new SandboxManager(cfg.sandbox);
     const tools = new ToolRegistry();
 
     const builtInTools = await import('../tools/builtin.js');
-    tools.registerBatch(builtInTools.getBuiltinTools({ security, config }));
+    tools.registerBatch(builtInTools.getBuiltinTools({ security, config, memory, sandbox }));
 
-    const sandbox = new SandboxManager(cfg.sandbox);
     const mcp = new MCPSession(config.getConfigDir());
 
     return new XiaobaiAgent({

@@ -1,10 +1,46 @@
-import { execSync, spawn } from 'node:child_process';
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync } from 'node:fs';
-import { join, resolve, relative } from 'node:path';
-import { glob } from 'node:fs/promises';
+import { spawn, type ChildProcess } from 'node:child_process';
+import {
+  readFileSync,
+  writeFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  statSync,
+} from 'node:fs';
+import { readFile, writeFile, mkdir, stat, readdir, glob as asyncGlob } from 'node:fs/promises';
+import { join, resolve, relative, isAbsolute, normalize, sep } from 'node:path';
+import { Readable } from 'node:stream';
 import type { Tool, ToolContext, ToolResult } from './registry.js';
-import type { SecurityManager } from '../security/manager.js';
-import type { ConfigManager } from '../config/manager.js';
+
+const MAX_OUTPUT = 50_000;
+const IS_WIN = process.platform === 'win32';
+
+function truncate(output: string, max = MAX_OUTPUT): string {
+  if (output.length <= max) return output;
+  const half = Math.floor(max / 2) - 20;
+  return output.slice(0, half) + `\n\n... [truncated ${output.length - max} chars] ...\n\n` + output.slice(-half);
+}
+
+function isPathSafe(filePath: string, allowedDirs?: string[]): boolean {
+  const normalized = normalize(resolve(filePath));
+  if (!isAbsolute(normalized)) return false;
+  const traversalPattern = /\.\./;
+  if (traversalPattern.test(relative(resolve(filePath), normalized))) return false;
+  if (allowedDirs?.length) {
+    return allowedDirs.some((dir) => normalized.startsWith(normalize(resolve(dir))));
+  }
+  return true;
+}
+
+function isBinaryContent(content: string): boolean {
+  const sample = content.slice(0, 8192);
+  let nullCount = 0;
+  for (let i = 0; i < sample.length; i++) {
+    if (sample.charCodeAt(i) === 0) nullCount++;
+    if (nullCount > 1) return true;
+  }
+  return false;
+}
 
 const bashTool = (context?: ToolContext): Tool => ({
   definition: {
@@ -21,20 +57,25 @@ const bashTool = (context?: ToolContext): Tool => ({
     },
   },
   async execute(args): Promise<ToolResult> {
-    const { command, timeout = 30000, cwd } = args as { command: string; timeout?: number; cwd?: string };
+    const { command, timeout = 30000, cwd } = args as {
+      command: string;
+      timeout?: number;
+      cwd?: string;
+    };
+
+    const workDir = cwd ?? process.cwd();
+
+    if (context?.sandbox && !context.sandbox.canExecute(command)) {
+      return { output: `Command blocked by sandbox policy: ${command}`, success: false, error: 'sandbox_denied' };
+    }
+
     try {
-      const result = execSync(command, {
-        timeout,
-        cwd: cwd ?? process.cwd(),
-        encoding: 'utf-8',
-        maxBuffer: 10 * 1024 * 1024,
-        shell: '/bin/bash',
-      });
-      return { output: result.slice(0, 50000), success: true };
+      const result = await execStreaming(command, workDir, timeout);
+      return { output: truncate(result), success: true };
     } catch (error: unknown) {
-      const e = error as { stdout?: string; stderr?: string; message?: string };
+      const e = error as ExecError;
       return {
-        output: (e.stdout ?? '') + (e.stderr ?? '') + (e.message ?? ''),
+        output: truncate((e.stdout ?? '') + (e.stderr ?? '') + (e.message ?? '')),
         success: false,
         error: 'execution_failed',
       };
@@ -42,7 +83,68 @@ const bashTool = (context?: ToolContext): Tool => ({
   },
 });
 
-const readTool: Tool = {
+interface ExecError extends Error {
+  stdout?: string;
+  stderr?: string;
+  code?: number;
+  timedOut?: boolean;
+}
+
+function execStreaming(command: string, cwd: string, timeout: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const shell = IS_WIN ? 'cmd.exe' : '/bin/bash';
+    const shellArgs = IS_WIN ? ['/c', command] : ['-c', command];
+
+    const child: ChildProcess = spawn(shell, shellArgs, {
+      cwd,
+      env: { ...process.env },
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
+    });
+
+    let stdout = '';
+    let stderr = '';
+
+    child.stdout?.on('data', (data: Buffer) => {
+      stdout += data.toString('utf-8');
+    });
+
+    child.stderr?.on('data', (data: Buffer) => {
+      stderr += data.toString('utf-8');
+    });
+
+    const timer = setTimeout(() => {
+      child.kill('SIGTERM');
+      const err: ExecError = new Error(`Command timed out after ${timeout}ms`);
+      err.stdout = stdout;
+      err.stderr = stderr;
+      err.timedOut = true;
+      reject(err);
+    }, timeout);
+
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      if (code === 0 || code === null) {
+        resolve(stdout + (stderr ? `\n[stderr]\n${stderr}` : ''));
+      } else {
+        const err: ExecError = new Error(`Exit code ${code}`);
+        err.stdout = stdout;
+        err.stderr = stderr;
+        err.code = code ?? undefined;
+        reject(err);
+      }
+    });
+
+    child.on('error', (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+
+    child.stdin?.end();
+  });
+}
+
+const readTool = (context?: ToolContext): Tool => ({
   definition: {
     name: 'read',
     description: 'Read file contents from the local filesystem',
@@ -57,12 +159,46 @@ const readTool: Tool = {
     },
   },
   async execute(args): Promise<ToolResult> {
-    const { file_path, offset = 0, limit = 2000 } = args as { file_path: string; offset?: number; limit?: number };
-    if (!existsSync(file_path)) {
-      return { output: `File not found: ${file_path}`, success: false, error: 'file_not_found' };
+    const { file_path, offset = 0, limit = 2000 } = args as {
+      file_path: string;
+      offset?: number;
+      limit?: number;
+    };
+
+    const absPath = resolve(file_path);
+    if (!isAbsolute(file_path)) {
+      return { output: 'Only absolute paths are allowed', success: false, error: 'invalid_path' };
     }
+
+    if (!existsSync(absPath)) {
+      return { output: `File not found: ${absPath}`, success: false, error: 'file_not_found' };
+    }
+
+    const fileStat = statSync(absPath);
+    if (fileStat.isDirectory()) {
+      try {
+        const entries = readdirSync(absPath);
+        return { output: entries.join('\n'), success: true };
+      } catch (error) {
+        return { output: `Cannot read directory: ${(error as Error).message}`, success: false, error: 'read_error' };
+      }
+    }
+
+    if (fileStat.size > 10 * 1024 * 1024) {
+      return { output: `File too large: ${fileStat.size} bytes (max 10MB)`, success: false, error: 'file_too_large' };
+    }
+
     try {
-      const content = readFileSync(file_path, 'utf-8');
+      const content = readFileSync(absPath, 'utf-8');
+
+      if (isBinaryContent(content)) {
+        return {
+          output: `Binary file (${fileStat.size} bytes). Use bash tool for binary inspection.`,
+          success: true,
+          metadata: { size: fileStat.size, binary: true },
+        };
+      }
+
       const lines = content.split('\n');
       const selected = lines.slice(offset, offset + limit);
       const numbered = selected.map((line, i) => `${offset + i + 1}\t${line}`).join('\n');
@@ -71,9 +207,9 @@ const readTool: Tool = {
       return { output: `Read failed: ${(error as Error).message}`, success: false, error: 'read_error' };
     }
   },
-};
+});
 
-const writeTool: Tool = {
+const writeTool = (context?: ToolContext): Tool => ({
   definition: {
     name: 'write',
     description: 'Write content to a file, creating it if it does not exist',
@@ -88,18 +224,32 @@ const writeTool: Tool = {
   },
   async execute(args): Promise<ToolResult> {
     const { file_path, content } = args as { file_path: string; content: string };
+
+    const absPath = resolve(file_path);
+    if (!isAbsolute(file_path)) {
+      return { output: 'Only absolute paths are allowed', success: false, error: 'invalid_path' };
+    }
+
+    if (context?.sandbox && !context.sandbox.canWrite(absPath, process.cwd())) {
+      return { output: `Write denied by sandbox policy: ${absPath}`, success: false, error: 'sandbox_denied' };
+    }
+
     try {
-      const dir = join(file_path, '..');
+      const dir = join(absPath, '..');
       if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-      writeFileSync(file_path, content, 'utf-8');
-      return { output: `Wrote ${content.length} chars to ${file_path}`, success: true };
+      writeFileSync(absPath, content, 'utf-8');
+      return {
+        output: `Wrote ${content.length} chars to ${absPath}`,
+        success: true,
+        metadata: { path: absPath, size: content.length },
+      };
     } catch (error) {
       return { output: `Write failed: ${(error as Error).message}`, success: false, error: 'write_error' };
     }
   },
-};
+});
 
-const editTool: Tool = {
+const editTool = (context?: ToolContext): Tool => ({
   definition: {
     name: 'edit',
     description: 'Perform exact string replacement in a file',
@@ -121,14 +271,27 @@ const editTool: Tool = {
       new_string: string;
       replace_all?: boolean;
     };
-    if (!existsSync(file_path)) {
-      return { output: `File not found: ${file_path}`, success: false, error: 'file_not_found' };
+
+    const absPath = resolve(file_path);
+    if (!isAbsolute(file_path)) {
+      return { output: 'Only absolute paths are allowed', success: false, error: 'invalid_path' };
     }
+
+    if (!existsSync(absPath)) {
+      return { output: `File not found: ${absPath}`, success: false, error: 'file_not_found' };
+    }
+
+    if (context?.sandbox && !context.sandbox.canWrite(absPath, process.cwd())) {
+      return { output: `Edit denied by sandbox policy: ${absPath}`, success: false, error: 'sandbox_denied' };
+    }
+
     try {
-      let content = readFileSync(file_path, 'utf-8');
+      let content = readFileSync(absPath, 'utf-8');
+
       if (!content.includes(old_string)) {
         return { output: 'old_string not found in file', success: false, error: 'match_not_found' };
       }
+
       if (!replace_all) {
         const count = content.split(old_string).length - 1;
         if (count > 1) {
@@ -139,21 +302,25 @@ const editTool: Tool = {
           };
         }
       }
-      content = replace_all
-        ? content.replaceAll(old_string, new_string)
-        : content.replace(old_string, new_string);
-      writeFileSync(file_path, content, 'utf-8');
-      return { output: `Edited ${file_path}`, success: true };
+
+      const oldCount = content.split(old_string).length - 1;
+      content = replace_all ? content.replaceAll(old_string, new_string) : content.replace(old_string, new_string);
+      writeFileSync(absPath, content, 'utf-8');
+
+      return {
+        output: `Edited ${absPath} (${oldCount} replacement${oldCount > 1 ? 's' : ''})`,
+        success: true,
+      };
     } catch (error) {
       return { output: `Edit failed: ${(error as Error).message}`, success: false, error: 'edit_error' };
     }
   },
-};
+});
 
 const grepTool: Tool = {
   definition: {
     name: 'grep',
-    description: 'Search file contents using regex pattern (ripgrep-like)',
+    description: 'Search file contents using regex pattern',
     parameters: {
       type: 'object',
       properties: {
@@ -166,35 +333,134 @@ const grepTool: Tool = {
           description: 'Output format',
           default: 'files',
         },
+        max_results: { type: 'number', description: 'Max results to return', default: 500 },
       },
       required: ['pattern'],
     },
   },
   async execute(args): Promise<ToolResult> {
-    const { pattern, path: searchPath = '.', glob: globPattern, output_mode = 'files' } = args as {
+    const {
+      pattern,
+      path: searchPath = '.',
+      glob: globPattern,
+      output_mode = 'files',
+      max_results = 500,
+    } = args as {
       pattern: string;
       path?: string;
       glob?: string;
       output_mode?: string;
+      max_results?: number;
     };
-    try {
-      let cmd = `rg --no-heading --color=never --max-count=500`;
-      if (output_mode === 'files') cmd += ' -l';
-      if (output_mode === 'count') cmd += ' -c';
-      if (globPattern) cmd += ` --glob '${globPattern}'`;
-      cmd += ` '${pattern.replace(/'/g, "\\'")}' '${searchPath}' 2>/dev/null || true`;
 
-      const result = execSync(cmd, {
-        encoding: 'utf-8',
-        maxBuffer: 5 * 1024 * 1024,
-        timeout: 30000,
-      });
-      return { output: result.slice(0, 50000) || 'No matches found', success: true };
+    const absSearchPath = resolve(searchPath);
+    if (!existsSync(absSearchPath)) {
+      return { output: `Path not found: ${absSearchPath}`, success: false, error: 'path_not_found' };
+    }
+
+    try {
+      const regex = new RegExp(pattern, 'i');
+      const results = await nativeGrep(absSearchPath, regex, globPattern, output_mode, max_results);
+      return { output: results || 'No matches found', success: true };
     } catch (error) {
-      return { output: 'No matches found', success: true };
+      if ((error as Error).message.includes('Invalid regular expression')) {
+        return {
+          output: `Invalid regex pattern: ${pattern}`,
+          success: false,
+          error: 'invalid_regex',
+        };
+      }
+      return { output: `Grep failed: ${(error as Error).message}`, success: false, error: 'grep_error' };
     }
   },
 };
+
+async function nativeGrep(
+  searchPath: string,
+  regex: RegExp,
+  globFilter?: string,
+  mode: string = 'files',
+  maxResults: number = 500,
+): Promise<string> {
+  const statResult = await stat(searchPath);
+  if (statResult.isFile()) {
+    return grepFile(searchPath, regex, mode);
+  }
+
+  const globPattern = globFilter ? `**/${globFilter}` : '**/*';
+  const files: string[] = [];
+
+  for await (const entry of asyncGlob(globPattern, { cwd: searchPath })) {
+    files.push(entry);
+    if (files.length >= maxResults * 2) break;
+  }
+
+  const matchedFiles: string[] = [];
+  const contentLines: string[] = [];
+  const countMap = new Map<string, number>();
+  let totalResults = 0;
+
+  for (const filePath of files) {
+    if (totalResults >= maxResults) break;
+    const full = join(searchPath, filePath);
+
+    try {
+      const fileStat = await stat(full);
+      if (fileStat.isDirectory() || fileStat.size > 5 * 1024 * 1024) continue;
+
+      const content = await readFile(full, 'utf-8');
+      if (isBinaryContent(content)) continue;
+
+      const lines = content.split('\n');
+      let fileCount = 0;
+
+      for (let i = 0; i < lines.length; i++) {
+        if (regex.test(lines[i])) {
+          fileCount++;
+          if (mode === 'content' && totalResults < maxResults) {
+            contentLines.push(`${full}:${i + 1}:${lines[i]}`);
+            totalResults++;
+          }
+          regex.lastIndex = 0;
+        }
+      }
+
+      if (fileCount > 0) {
+        matchedFiles.push(full);
+        if (mode === 'count') countMap.set(full, fileCount);
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  if (mode === 'files') return matchedFiles.join('\n');
+  if (mode === 'count') {
+    return Array.from(countMap.entries())
+      .map(([f, c]) => `${f}:${c}`)
+      .join('\n');
+  }
+  return contentLines.join('\n');
+}
+
+async function grepFile(filePath: string, regex: RegExp, mode: string): Promise<string> {
+  const content = await readFile(filePath, 'utf-8');
+  const lines = content.split('\n');
+  const results: string[] = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    if (regex.test(lines[i])) {
+      if (mode === 'content') results.push(`${filePath}:${i + 1}:${lines[i]}`);
+      else if (mode === 'files') return filePath;
+      else results.push(`${i + 1}`);
+      regex.lastIndex = 0;
+    }
+  }
+
+  if (mode === 'files') return '';
+  if (mode === 'count') return `${filePath}:${results.length}`;
+  return results.join('\n');
+}
 
 const globTool: Tool = {
   definition: {
@@ -211,28 +477,47 @@ const globTool: Tool = {
   },
   async execute(args): Promise<ToolResult> {
     const { pattern, path: searchPath = '.' } = args as { pattern: string; path?: string };
+
+    const absSearchPath = resolve(searchPath);
+    if (!existsSync(absSearchPath)) {
+      return { output: `Path not found: ${absSearchPath}`, success: false, error: 'path_not_found' };
+    }
+
     try {
-      const result = execSync(`find '${searchPath}' -name '${pattern}' -type f 2>/dev/null | head -250`, {
-        encoding: 'utf-8',
-        maxBuffer: 5 * 1024 * 1024,
-        timeout: 30000,
-      });
-      return { output: result.trim() || 'No files found', success: true };
-    } catch {
-      return { output: 'No files found', success: true };
+      const files: string[] = [];
+      for await (const entry of asyncGlob(pattern, { cwd: absSearchPath })) {
+        files.push(join(absSearchPath, entry));
+        if (files.length >= 250) break;
+      }
+
+      return {
+        output: files.length > 0 ? files.join('\n') : 'No files found',
+        success: true,
+        metadata: { count: files.length },
+      };
+    } catch (error) {
+      return { output: `Glob failed: ${(error as Error).message}`, success: false, error: 'glob_error' };
     }
   },
 };
 
-const memoryTool: Tool = {
+const memoryTool = (context?: ToolContext): Tool => ({
   definition: {
     name: 'memory',
     description: 'Manage persistent memory across sessions',
     parameters: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['add', 'replace', 'remove', 'list'], description: 'Action to perform' },
-        target: { type: 'string', enum: ['memory', 'user'], description: 'Memory store target' },
+        action: {
+          type: 'string',
+          enum: ['add', 'replace', 'remove', 'list'],
+          description: 'Action to perform',
+        },
+        target: {
+          type: 'string',
+          enum: ['memory', 'user'],
+          description: 'Memory store target',
+        },
         content: { type: 'string', description: 'Content to add or replace with' },
         old_text: { type: 'string', description: 'Substring to match for replace/remove' },
       },
@@ -240,9 +525,59 @@ const memoryTool: Tool = {
     },
   },
   async execute(args): Promise<ToolResult> {
-    return { output: 'Memory operations handled by MemorySystem directly', success: true };
+    const { action, target, content, old_text } = args as {
+      action: 'add' | 'replace' | 'remove' | 'list';
+      target: 'memory' | 'user';
+      content?: string;
+      old_text?: string;
+    };
+
+    if (!context?.memory) {
+      return { output: 'Memory system not available', success: false, error: 'no_memory' };
+    }
+
+    const mem = context.memory;
+
+    switch (action) {
+      case 'add': {
+        if (!content) return { output: 'content is required for add', success: false, error: 'missing_content' };
+        const result = mem.add(target, content);
+        return {
+          output: result.success ? `Added to ${target} memory` : `Failed: ${result.error}`,
+          success: result.success,
+          error: result.error,
+        };
+      }
+      case 'replace': {
+        if (!old_text || !content) {
+          return { output: 'old_text and content are required for replace', success: false, error: 'missing_params' };
+        }
+        const result = mem.replace(target, old_text, content);
+        return {
+          output: result.success ? `Replaced in ${target} memory` : `Failed: ${result.error}`,
+          success: result.success,
+          error: result.error,
+        };
+      }
+      case 'remove': {
+        if (!old_text) return { output: 'old_text is required for remove', success: false, error: 'missing_params' };
+        const result = mem.remove(target, old_text);
+        return {
+          output: result.success ? `Removed from ${target} memory` : `Failed: ${result.error}`,
+          success: result.success,
+          error: result.error,
+        };
+      }
+      case 'list': {
+        const entries = mem.list(target);
+        return {
+          output: entries.length > 0 ? entries.join('\n') : `${target} memory is empty`,
+          success: true,
+        };
+      }
+    }
   },
-};
+});
 
 const agentTool: Tool = {
   definition: {
@@ -263,19 +598,28 @@ const agentTool: Tool = {
     },
   },
   async execute(args): Promise<ToolResult> {
-    return { output: 'Sub-agent execution requires running agent loop context', success: true };
+    return {
+      output: 'Sub-agent execution requires running agent loop context',
+      success: true,
+      metadata: { note: 'Implemented in orchestrator integration layer' },
+    };
   },
 };
 
-export function getBuiltinTools(context?: ToolContext): Tool[] {
+export interface ToolContextExtended extends ToolContext {
+  memory?: import('../memory/system.js').MemorySystem;
+  sandbox?: import('../sandbox/manager.js').SandboxManager;
+}
+
+export function getBuiltinTools(context?: ToolContextExtended): Tool[] {
   return [
     bashTool(context),
-    readTool,
-    writeTool,
-    editTool,
+    readTool(context),
+    writeTool(context),
+    editTool(context),
     grepTool,
     globTool,
-    memoryTool,
+    memoryTool(context),
     agentTool,
   ];
 }
