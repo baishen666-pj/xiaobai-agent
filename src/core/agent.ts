@@ -90,6 +90,19 @@ export class XiaobaiAgent {
     return this.deps.plugins;
   }
 
+  getCurrentModel(): { provider: string; model: string } {
+    const cfg = this.deps.config.get();
+    return { provider: cfg.provider.default, model: cfg.model.default };
+  }
+
+  setModel(provider?: string, model?: string): void {
+    if (!provider && !model) return;
+    this.deps.provider.updateConfig({
+      ...(provider ? { provider } : {}),
+      ...(model ? { model } : {}),
+    });
+  }
+
   async destroy(): Promise<void> {
     if (this.deps.plugins) {
       await this.deps.plugins.deactivateAll();

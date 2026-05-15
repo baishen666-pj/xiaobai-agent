@@ -9,6 +9,7 @@ import { listRoles } from '../core/roles.js';
 import { createInterface } from 'node:readline';
 import { exec } from 'node:child_process';
 import { Spinner, renderMarkdown, formatToolCall, formatTokenUsage, clearLine, printBanner, printHelp } from './renderer.js';
+import { StreamingMarkdownRenderer } from './streaming-renderer.js';
 import { PermissionPrompt } from './permissions.js';
 
 const program = new Command();
@@ -33,6 +34,7 @@ program
       const agent = await XiaobaiAgent.create();
       const spinner = new Spinner();
       const permPrompt = new PermissionPrompt(options.auto ? 'auto' : 'default');
+      const streamRenderer = new StreamingMarkdownRenderer();
 
       const rl = createInterface({
         input: process.stdin,
@@ -119,11 +121,19 @@ program
           }
 
           if (trimmed.startsWith('/model')) {
-            const parts = trimmed.split(' ');
-            if (parts.length > 1) {
-              console.log(chalk.gray(`  Model switching not yet implemented. Current: default\n`));
+            const parts = trimmed.trim().split(/\s+/);
+            const current = agent.getCurrentModel();
+
+            if (parts.length === 1) {
+              console.log(chalk.cyan(`  Provider: ${current.provider}`));
+              console.log(chalk.cyan(`  Model:    ${current.model}\n`));
+            } else if (parts.length === 2) {
+              agent.setModel(parts[1]);
+              const updated = agent.getCurrentModel();
+              console.log(chalk.green(`  Switched to provider: ${updated.provider}\n`));
             } else {
-              console.log(chalk.gray(`  Current model: default\n`));
+              agent.setModel(parts[1], parts[2]);
+              console.log(chalk.green(`  Switched to ${parts[1]}/${parts[2]}\n`));
             }
             prompt();
             return;
@@ -132,6 +142,7 @@ program
           // Normal chat
           spinner.start('Thinking...');
           turnCount++;
+          streamRenderer.reset();
 
           try {
             let currentTool = '';
@@ -150,7 +161,7 @@ program
 
                 case 'stream':
                   spinner.stop();
-                  process.stdout.write(event.content);
+                  streamRenderer.push(event.content);
                   break;
 
                 case 'tool_call':
@@ -175,6 +186,7 @@ program
 
                 case 'stop':
                   spinner.stop();
+                  streamRenderer.flush();
                   if (event.tokens) totalTokens += event.tokens;
                   console.log(); // newline after response
                   break;

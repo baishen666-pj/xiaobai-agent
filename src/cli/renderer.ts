@@ -1,4 +1,5 @@
 import chalk from 'chalk';
+import { highlightCode, getLanguageLabel } from './highlight.js';
 
 export interface SpinnerOptions {
   frames?: string[];
@@ -74,10 +75,19 @@ export function renderMarkdown(text: string): string {
   result = result.replace(/^## (.+)$/gm, (_, content) => chalk.bold.cyan(`  ${content}`));
   result = result.replace(/^# (.+)$/gm, (_, content) => chalk.bold.cyan(content));
 
+  // Tables: | head | head |\n| --- | --- |\n| cell | cell |
+  result = result.replace(/^(\|.+\|)\n(\|[-:| ]+\|)\n((?:\|.+\|\n?)+)/gm, (_, headerRow, sepRow, bodyRows) => {
+    return renderTable(headerRow, sepRow, bodyRows);
+  });
+
   // Code blocks: ```lang\n...\n```
   result = result.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
     const trimmed = code.trim();
-    return chalk.gray('─'.repeat(40)) + '\n' + chalk.green(trimmed) + '\n' + chalk.gray('─'.repeat(40));
+    const width = getTerminalWidth();
+    const border = chalk.gray('─'.repeat(Math.min(width, 80)));
+    const label = getLanguageLabel(lang || undefined);
+    const highlighted = highlightCode(trimmed, lang || undefined);
+    return border + label + '\n' + highlighted + '\n' + border;
   });
 
   // Lists: - item
@@ -93,6 +103,53 @@ export function renderMarkdown(text: string): string {
   result = result.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, text, url) => `${chalk.underline(text)} (${chalk.gray(url)})`);
 
   return result;
+}
+
+function renderTable(headerRow: string, sepRow: string, bodyRows: string): string {
+  const parseCells = (row: string) =>
+    row.split('|').map(c => c.trim()).filter(c => c.length > 0);
+
+  const headers = parseCells(headerRow);
+  const separators = parseCells(sepRow);
+  const rows = bodyRows.trim().split('\n').map(r => parseCells(r));
+
+  const alignments = separators.map(sep => {
+    if (sep.startsWith(':') && sep.endsWith(':')) return 'center' as const;
+    if (sep.endsWith(':')) return 'right' as const;
+    return 'left' as const;
+  });
+
+  const colCount = headers.length;
+  const colWidths = headers.map((h, i) => {
+    const cellWidths = [h.length, ...rows.map(r => (r[i] ?? '').length)];
+    return Math.min(Math.max(...cellWidths) + 2, Math.floor(getTerminalWidth() / colCount) - 3);
+  });
+
+  const pad = (text: string, width: number, align: 'left' | 'right' | 'center') => {
+    const padLen = Math.max(0, width - text.length);
+    if (align === 'right') return ' '.repeat(padLen) + text;
+    if (align === 'center') return ' '.repeat(Math.floor(padLen / 2)) + text + ' '.repeat(Math.ceil(padLen / 2));
+    return text + ' '.repeat(padLen);
+  };
+
+  const sep = chalk.gray('│');
+  const lines: string[] = [];
+
+  lines.push(chalk.gray('─'.repeat(colWidths.reduce((a, b) => a + b, 0) + colCount + 1)));
+
+  const headerLine = headers.map((h, i) => chalk.bold(pad(h, colWidths[i], alignments[i]))).join(sep);
+  lines.push(sep + headerLine + sep);
+
+  lines.push(headers.map((_, i) => chalk.gray('─'.repeat(colWidths[i]))).join(chalk.gray('┼')) + '');
+
+  for (const row of rows) {
+    const rowLine = headers.map((_, i) => pad(row[i] ?? '', colWidths[i], alignments[i])).join(sep);
+    lines.push(sep + rowLine + sep);
+  }
+
+  lines.push(chalk.gray('─'.repeat(colWidths.reduce((a, b) => a + b, 0) + colCount + 1)));
+
+  return lines.join('\n');
 }
 
 export interface ToolDisplay {
@@ -158,6 +215,10 @@ export function clearLine(): void {
   process.stdout.write('\r\x1B[2K');
 }
 
+export function getTerminalWidth(): number {
+  return process.stdout.columns ?? 80;
+}
+
 export function printBanner(): void {
   console.log(chalk.cyan.bold('\n  ╦ ╦┌┐┌┌─┐┬─┐┌┬┐'));
   console.log(chalk.cyan.bold('  ║║║││││  ├┬┘│││'));
@@ -167,12 +228,14 @@ export function printBanner(): void {
 
 export function printHelp(): void {
   console.log(chalk.yellow('\nCommands:'));
-  console.log('  /exit, /quit   - Exit the session');
-  console.log('  /clear         - Clear conversation history');
-  console.log('  /compact       - Force context compaction');
-  console.log('  /memory        - Show memory usage');
-  console.log('  /tools         - List available tools');
-  console.log('  /sessions      - List saved sessions');
-  console.log('  /model [name]  - Show or switch model');
-  console.log('  /help          - Show this help\n');
+  console.log('  /exit, /quit             - Exit the session');
+  console.log('  /clear                   - Clear conversation history');
+  console.log('  /compact                 - Force context compaction');
+  console.log('  /memory                  - Show memory usage');
+  console.log('  /tools                   - List available tools');
+  console.log('  /sessions                - List saved sessions');
+  console.log('  /model                   - Show current provider/model');
+  console.log('  /model <provider>        - Switch provider');
+  console.log('  /model <p> <model>       - Switch provider and model');
+  console.log('  /help                    - Show this help\n');
 }

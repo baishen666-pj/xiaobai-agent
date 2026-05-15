@@ -194,6 +194,16 @@ export class ProviderRouter {
     return Object.keys(PROVIDER_FACTORIES);
   }
 
+  updateConfig(updates: { provider?: string; model?: string }): void {
+    if (updates.provider) {
+      this.providers.delete(this.config.provider.default);
+      this.config.provider.default = updates.provider;
+    }
+    if (updates.model) {
+      this.config.model.default = updates.model;
+    }
+  }
+
   // ── Dual-model routing (from Aider pattern) ──
 
   async chatWithRole(
