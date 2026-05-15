@@ -1,7 +1,7 @@
 import type { Tool } from '../tools/registry.js';
 import type { HookEvent, HookResult } from '../hooks/system.js';
 import type { LLMProvider, ProviderConfig } from '../provider/types.js';
-import type { PluginAPI, PluginError, PluginManifest, PluginState } from './types.js';
+import type { PluginAPI, PluginError, PluginManifest, PluginPermission, PluginState } from './types.js';
 import type { ToolRegistry } from '../tools/registry.js';
 import type { HookSystem } from '../hooks/system.js';
 import type { ProviderRouter } from '../provider/router.js';
@@ -39,6 +39,12 @@ export class PluginAPIImpl implements PluginAPI {
     this._onError = onError;
   }
 
+  private checkPermission(perm: PluginPermission): void {
+    if (!this.manifest.permissions.includes(perm)) {
+      throw new Error(`Plugin "${this.pluginName}" lacks permission: ${perm}. Declared: [${this.manifest.permissions.join(', ')}]`);
+    }
+  }
+
   get state(): PluginState {
     return this._state;
   }
@@ -54,6 +60,7 @@ export class PluginAPIImpl implements PluginAPI {
   readonly tools: PluginAPI['tools'] = {
     register: (tool: Tool): void => {
       try {
+        this.checkPermission('tools:register');
         const internalName = `${this.pluginName}:${tool.definition.name}`;
         this._toolNames.set(tool.definition.name, internalName);
         this._toolRegistry.register({
@@ -72,6 +79,7 @@ export class PluginAPIImpl implements PluginAPI {
 
     unregister: (name: string): void => {
       try {
+        this.checkPermission('tools:register');
         const internalName = this._toolNames.get(name);
         if (internalName) {
           this._toolRegistry.unregister(internalName);
@@ -90,6 +98,7 @@ export class PluginAPIImpl implements PluginAPI {
 
   readonly hooks: PluginAPI['hooks'] = {
     on: (event: HookEvent, listener: (data: Record<string, unknown>) => Promise<HookResult | void>): (() => void) => {
+      this.checkPermission('hooks:subscribe');
       const unsubscribe = this._hookSystem.on(event, listener);
       this._cleanupFns.push(unsubscribe);
       return unsubscribe;
@@ -99,6 +108,7 @@ export class PluginAPIImpl implements PluginAPI {
   readonly providers: PluginAPI['providers'] = {
     register: (name: string, factory: (config: ProviderConfig) => LLMProvider): void => {
       try {
+        this.checkPermission('providers:register');
         this._providerRouter.registerProviderFactory(name, factory);
       } catch (err) {
         this._onError({
@@ -112,6 +122,7 @@ export class PluginAPIImpl implements PluginAPI {
 
     unregister: (name: string): void => {
       try {
+        this.checkPermission('providers:register');
         this._providerRouter.unregisterProviderFactory(name);
       } catch (err) {
         this._onError({
@@ -127,6 +138,7 @@ export class PluginAPIImpl implements PluginAPI {
   readonly config: PluginAPI['config'] = {
     get: (): Record<string, unknown> => {
       try {
+        this.checkPermission('config:read');
         const cfg = this._configManager.get() as unknown as Record<string, Record<string, unknown>>;
         const plugins = cfg.plugins;
         const scoped = plugins && typeof plugins === 'object' ? plugins[this.pluginName] : undefined;
@@ -138,6 +150,7 @@ export class PluginAPIImpl implements PluginAPI {
 
     set: (values: Record<string, unknown>): void => {
       try {
+        this.checkPermission('config:write');
         const cfg = this._configManager.get() as unknown as Record<string, Record<string, Record<string, unknown>>>;
         const plugins = cfg.plugins ?? {};
         plugins[this.pluginName] = { ...(plugins[this.pluginName] ?? {}), ...values };
@@ -156,6 +169,7 @@ export class PluginAPIImpl implements PluginAPI {
   readonly memory: PluginAPI['memory'] = {
     add: (content: string): void => {
       try {
+        this.checkPermission('memory:write');
         this._memorySystem.add('memory', content);
       } catch (err) {
         this._onError({
@@ -169,6 +183,7 @@ export class PluginAPIImpl implements PluginAPI {
 
     list: (): string[] => {
       try {
+        this.checkPermission('memory:read');
         return this._memorySystem.list('memory');
       } catch {
         return [];

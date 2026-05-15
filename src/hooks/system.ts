@@ -118,7 +118,7 @@ export class HookSystem {
         encoding: 'utf-8',
         timeout: 30000,
         input: envData,
-        shell: '/bin/bash',
+        shell: process.platform === 'win32' ? 'cmd.exe' : '/bin/bash',
       });
 
       if (result.includes('__BLOCK__')) {

@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 
@@ -80,7 +80,6 @@ export class SessionManager {
     const path = this.getSessionPath(sessionId);
     if (!existsSync(path)) return false;
     try {
-      const { unlinkSync } = require('node:fs');
       unlinkSync(path);
       return true;
     } catch {

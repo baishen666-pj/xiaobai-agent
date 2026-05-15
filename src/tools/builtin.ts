@@ -1,4 +1,7 @@
-import { spawn, type ChildProcess } from 'node:child_process';
+// NOTE: Tools defined here can be migrated to individual files under src/tools/
+// that call registry.registerSelf() for auto-registration. See registry.ts for details.
+// The getBuiltinTools() function remains the canonical entry point for now.
+import { spawn, execSync, type ChildProcess } from 'node:child_process';
 import {
   readFileSync,
   writeFileSync,
@@ -317,6 +320,67 @@ const editTool = (context?: ToolContext): Tool => ({
   },
 });
 
+let rgAvailable: boolean | null = null;
+
+function isRgAvailable(): boolean {
+  if (rgAvailable !== null) return rgAvailable;
+  try {
+    const cmd = IS_WIN ? 'where rg' : 'which rg';
+    execSync(cmd, { stdio: 'pipe', timeout: 3000 });
+    rgAvailable = true;
+  } catch {
+    rgAvailable = false;
+  }
+  return rgAvailable;
+}
+
+function runRipgrep(
+  pattern: string,
+  searchPath: string,
+  globFilter?: string,
+  mode: string = 'files',
+  maxResults: number = 500,
+): string {
+  const args: string[] = ['--color', 'never', '--max-count', String(maxResults)];
+
+  if (mode === 'files') {
+    args.push('--files-with-matches');
+  } else if (mode === 'count') {
+    args.push('--count');
+  } else {
+    args.push('--line-number');
+  }
+
+  if (globFilter) {
+    args.push('--glob', globFilter);
+  }
+
+  args.push('--regexp', pattern, searchPath);
+
+  try {
+    const result = execSync(`rg ${args.map((a) => `"${a}"`).join(' ')}`, {
+      maxBuffer: 10 * 1024 * 1024,
+      encoding: 'utf-8',
+      timeout: 30000,
+    });
+    return result.trim();
+  } catch (error: unknown) {
+    const e = error as { status?: number; stdout?: string; stderr?: string };
+    if (e.status === 1 && e.stdout !== undefined) {
+      return (e.stdout as string).trim();
+    }
+    if (e.status === 1) {
+      return '';
+    }
+    if (e.status === 2) {
+      throw new Error(
+        e.stderr ?? 'ripgrep error',
+      );
+    }
+    throw error;
+  }
+}
+
 const grepTool: Tool = {
   definition: {
     name: 'grep',
@@ -359,18 +423,27 @@ const grepTool: Tool = {
     }
 
     try {
+      if (isRgAvailable()) {
+        const results = runRipgrep(pattern, absSearchPath, globPattern, output_mode, max_results);
+        return { output: results || 'No matches found', success: true };
+      }
+
       const regex = new RegExp(pattern, 'i');
       const results = await nativeGrep(absSearchPath, regex, globPattern, output_mode, max_results);
       return { output: results || 'No matches found', success: true };
     } catch (error) {
-      if ((error as Error).message.includes('Invalid regular expression')) {
+      const errMsg = (error as Error).message;
+      const isInvalidRegex = errMsg.includes('Invalid regular expression') ||
+        errMsg.includes('regex parse error') ||
+        errMsg.includes('regex compilation failed');
+      if (isInvalidRegex) {
         return {
           output: `Invalid regex pattern: ${pattern}`,
           success: false,
           error: 'invalid_regex',
         };
       }
-      return { output: `Grep failed: ${(error as Error).message}`, success: false, error: 'grep_error' };
+      return { output: `Grep failed: ${errMsg}`, success: false, error: 'grep_error' };
     }
   },
 };
@@ -579,32 +652,66 @@ const memoryTool = (context?: ToolContext): Tool => ({
   },
 });
 
-const agentTool: Tool = {
-  definition: {
-    name: 'agent',
-    description: 'Spawn a sub-agent with isolated context for parallel work',
-    parameters: {
-      type: 'object',
-      properties: {
-        prompt: { type: 'string', description: 'Task description for the sub-agent' },
-        type: {
-          type: 'string',
-          enum: ['explore', 'plan', 'general-purpose'],
-          description: 'Agent type',
-          default: 'general-purpose',
+function createAgentTool(context?: ToolContextExtended): Tool {
+  return {
+    definition: {
+      name: 'agent',
+      description: 'Spawn a sub-agent with isolated context. Supports explore, plan, and general-purpose modes. Sub-agents cannot spawn further agents (max depth 1).',
+      parameters: {
+        type: 'object',
+        properties: {
+          prompt: { type: 'string', description: 'Task description for the sub-agent' },
+          type: {
+            type: 'string',
+            enum: ['explore', 'plan', 'general-purpose'],
+            description: 'Agent type: explore (research only), plan (architect only), general-purpose (full tools)',
+            default: 'general-purpose',
+          },
         },
+        required: ['prompt'],
       },
-      required: ['prompt'],
     },
-  },
-  async execute(args): Promise<ToolResult> {
-    return {
-      output: 'Sub-agent execution requires running agent loop context',
-      success: true,
-      metadata: { note: 'Implemented in orchestrator integration layer' },
-    };
-  },
-};
+    async execute(args, toolContext): Promise<ToolResult> {
+      const prompt = args.prompt as string;
+      const type = (args.type as string) ?? 'general-purpose';
+
+      const { SubAgentEngine } = await import('../core/sub-agent.js');
+      const { ToolRegistry } = await import('./registry.js');
+
+      const subEngine = new SubAgentEngine({
+        provider: (toolContext as any)?.provider ?? (context as any)?.provider,
+        sessions: (toolContext as any)?.sessions ?? (context as any)?.sessions,
+        hooks: (toolContext as any)?.hooks ?? (context as any)?.hooks,
+        config: (toolContext as any)?.config ?? (context as any)?.config,
+        memory: context?.memory ?? (toolContext as any)?.memory,
+        security: (toolContext as any)?.security ?? (context as any)?.security,
+        skills: (toolContext as any)?.skills,
+      });
+
+      const typeToDef: Record<string, string | undefined> = {
+        explore: 'explore',
+        plan: 'plan',
+      };
+
+      const result = await subEngine.spawn(prompt, new ToolRegistry(), {
+        definitionName: typeToDef[type],
+      });
+
+      subEngine.destroy();
+
+      return {
+        output: result.success
+          ? result.output
+          : `Sub-agent failed: ${result.error}`,
+        success: result.success,
+        metadata: {
+          tokensUsed: result.tokensUsed,
+          toolCalls: result.toolCalls,
+        },
+      };
+    },
+  };
+}
 
 export interface ToolContextExtended extends ToolContext {
   memory?: import('../memory/system.js').MemorySystem;
@@ -620,6 +727,6 @@ export function getBuiltinTools(context?: ToolContextExtended): Tool[] {
     grepTool,
     globTool,
     memoryTool(context),
-    agentTool,
+    createAgentTool(context),
   ];
 }

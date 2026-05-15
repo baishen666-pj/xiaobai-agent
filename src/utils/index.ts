@@ -1,5 +1,7 @@
+import { existsSync, mkdirSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+
 export function ensureDir(path: string): void {
-  const { existsSync, mkdirSync } = require('node:fs');
   if (!existsSync(path)) mkdirSync(path, { recursive: true });
 }
 
@@ -9,7 +11,6 @@ export function truncate(str: string, maxLen: number): string {
 }
 
 export function hashContent(content: string): string {
-  const { createHash } = require('node:crypto');
   return createHash('sha256').update(content).digest('hex').slice(0, 16);
 }
 

@@ -93,6 +93,21 @@ export class MCPSession {
     return connection;
   }
 
+  async connectSSE(name: string): Promise<MCPConnection | null> {
+    const config = this.servers.get(name);
+    if (!config || !config.enabled || !config.url) return null;
+
+    const existing = this.connections.get(name);
+    if (existing?.isAlive()) return existing;
+
+    const connection = new MCPSSEConnection(config);
+    const started = await connection.start();
+    if (!started) return null;
+
+    this.connections.set(name, connection);
+    return connection;
+  }
+
   async connectAll(): Promise<Map<string, MCPConnection>> {
     const enabled = this.getEnabledServers();
     const results = new Map<string, MCPConnection>();
@@ -217,13 +232,13 @@ export class MCPSession {
 }
 
 export class MCPConnection {
-  private config: MCPServerConfig;
-  private process: ChildProcess | null = null;
-  private requestId = 0;
-  private pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
-  private buffer = '';
-  private alive = false;
-  private capabilities: Record<string, unknown> = {};
+  protected config: MCPServerConfig;
+  protected process: ChildProcess | null = null;
+  protected requestId = 0;
+  protected pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
+  protected buffer = '';
+  protected alive = false;
+  protected capabilities: Record<string, unknown> = {};
 
   constructor(config: MCPServerConfig) {
     this.config = config;
@@ -306,7 +321,7 @@ export class MCPConnection {
     return this.sendRequest('tools/call', { name, arguments: args });
   }
 
-  private sendRequest(method: string, params: Record<string, unknown>): Promise<unknown> {
+  protected sendRequest(method: string, params: Record<string, unknown>): Promise<unknown> {
     return new Promise((resolve, reject) => {
       const id = ++this.requestId;
       const request: JsonRpcRequest = { jsonrpc: '2.0', id, method, params };
@@ -325,13 +340,13 @@ export class MCPConnection {
     });
   }
 
-  private async sendNotification(method: string, params: Record<string, unknown>): Promise<void> {
+  protected async sendNotification(method: string, params: Record<string, unknown>): Promise<void> {
     const notification = { jsonrpc: '2.0', method, params };
     const message = `Content-Length: ${Buffer.byteLength(JSON.stringify(notification))}\r\n\r\n${JSON.stringify(notification)}`;
     this.process?.stdin?.write(message);
   }
 
-  private handleData(data: string): void {
+  protected handleData(data: string): void {
     this.buffer += data;
 
     while (this.buffer.length > 0) {
@@ -366,6 +381,110 @@ export class MCPConnection {
         // Invalid JSON, skip
       }
     }
+  }
+}
+
+class MCPSSEConnection extends MCPConnection {
+  private sseUrl: string;
+  private abortController: AbortController | null = null;
+  private aliveFlag = false;
+
+  constructor(config: MCPServerConfig) {
+    super(config);
+    this.sseUrl = config.url!;
+  }
+
+  override async start(): Promise<boolean> {
+    try {
+      this.abortController = new AbortController();
+      this.aliveFlag = true;
+
+      const response = await fetch(this.sseUrl, {
+        method: 'GET',
+        headers: { Accept: 'text/event-stream' },
+        signal: this.abortController.signal,
+      });
+
+      if (!response.ok || !response.body) {
+        this.aliveFlag = false;
+        return false;
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      const processStream = async (): Promise<void> => {
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() ?? '';
+
+            for (const line of lines) {
+              if (line.startsWith('data: ')) {
+                const data = line.slice(6).trim();
+                if (!data) continue;
+                try {
+                  const response = JSON.parse(data) as JsonRpcResponse;
+                  this.handleSSEMessage(response);
+                } catch {
+                  // Non-JSON data line, skip
+                }
+              }
+            }
+          }
+        } catch {
+          // Stream ended or aborted
+        } finally {
+          this.aliveFlag = false;
+        }
+      };
+
+      processStream();
+
+      await this.sendSSEInit();
+
+      return true;
+    } catch {
+      this.aliveFlag = false;
+      return false;
+    }
+  }
+
+  override stop(): void {
+    this.abortController?.abort();
+    this.abortController = null;
+    this.aliveFlag = false;
+  }
+
+  override isAlive(): boolean {
+    return this.aliveFlag;
+  }
+
+  private handleSSEMessage(response: JsonRpcResponse): void {
+    const handler = this.pending.get(response.id);
+    if (handler) {
+      this.pending.delete(response.id);
+      if (response.error) {
+        handler.reject(new Error(response.error.message));
+      } else {
+        handler.resolve(response.result);
+      }
+    }
+  }
+
+  private async sendSSEInit(): Promise<void> {
+    const initResult = await this.sendRequest('initialize', {
+      protocolVersion: '2024-11-05',
+      capabilities: {},
+      clientInfo: { name: 'xiaobai', version: '0.1.0' },
+    });
+    void initResult;
+    await this.sendNotification('notifications/initialized', {});
   }
 }
 

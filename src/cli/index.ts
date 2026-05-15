@@ -105,7 +105,7 @@ program
           }
 
           if (trimmed === '/sessions') {
-            const sessions = (agent as any).deps.sessions.listSessions?.() ?? [];
+            const sessions = agent.getDeps().sessions.listSessions?.() ?? [];
             if (sessions.length === 0) {
               console.log(chalk.gray('  No saved sessions.\n'));
             } else {
@@ -348,14 +348,15 @@ program
         console.log(chalk.gray(`Dashboard: ${server.getHttpUrl()}`));
       }
 
+      const agentDeps = agent.getDeps();
       const orch = new Orchestrator({
-        config: (agent as any).deps.config,
-        provider: (agent as any).deps.provider,
-        tools: (agent as any).deps.tools,
-        sessions: (agent as any).deps.sessions,
-        hooks: (agent as any).deps.hooks,
-        memory: (agent as any).deps.memory,
-        security: (agent as any).deps.security,
+        config: agentDeps.config,
+        provider: agentDeps.provider,
+        tools: agentDeps.tools,
+        sessions: agentDeps.sessions,
+        hooks: agentDeps.hooks,
+        memory: agentDeps.memory,
+        security: agentDeps.security,
       });
 
       if (server) server.attachOrchestrator(orch);

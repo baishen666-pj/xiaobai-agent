@@ -35,11 +35,27 @@ export interface Tool {
 }
 
 export class ToolRegistry {
+  private static defaultInstance: ToolRegistry | null = null;
   private tools = new Map<string, Tool>();
   private mcpTools = new Map<string, Tool>();
 
+  static getDefault(): ToolRegistry {
+    if (!ToolRegistry.defaultInstance) {
+      ToolRegistry.defaultInstance = new ToolRegistry();
+    }
+    return ToolRegistry.defaultInstance;
+  }
+
+  static resetDefault(): void {
+    ToolRegistry.defaultInstance = null;
+  }
+
   register(tool: Tool): void {
     this.tools.set(tool.definition.name, tool);
+  }
+
+  static registerSelf(tool: Tool): void {
+    ToolRegistry.getDefault().register(tool);
   }
 
   registerBatch(tools: Tool[]): void {

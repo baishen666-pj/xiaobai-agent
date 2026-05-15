@@ -32,7 +32,7 @@ beforeEach(() => {
 
   api = new PluginAPIImpl(
     'test-plugin',
-    { name: 'test-plugin', version: '1.0.0', description: 'Test', permissions: [] },
+    { name: 'test-plugin', version: '1.0.0', description: 'Test', permissions: ['tools:register', 'hooks:subscribe', 'config:read', 'config:write', 'memory:read', 'memory:write', 'providers:register'] },
     tools,
     hooks,
     config,

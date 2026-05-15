@@ -1,6 +1,6 @@
 {
   "name": "xiaobai-agent",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Fusion AI agent — multi-agent orchestration, 18+ LLM providers, streaming CLI, MCP integration, real-time dashboard, skill system, plugin marketplace",
   "type": "module",
   "main": "dist/index.js",
@@ -24,6 +24,18 @@
     "./provider": {
       "import": "./dist/provider/router.js",
       "types": "./dist/provider/router.d.ts"
+    },
+    "./protocols/a2a": {
+      "import": "./dist/protocols/a2a/server.js",
+      "types": "./dist/protocols/a2a/server.d.ts"
+    },
+    "./protocols/acp": {
+      "import": "./dist/protocols/acp/adapter.js",
+      "types": "./dist/protocols/acp/adapter.d.ts"
+    },
+    "./memory": {
+      "import": "./dist/memory/mem0-adapter.js",
+      "types": "./dist/memory/mem0-adapter.d.ts"
     }
   },
   "files": [

@@ -227,22 +227,6 @@ export class AgentLoop {
       yield { type: 'stop', content: 'Task completed' };
     }
 
-    if (response.toolCalls?.length) {
-      const results = await this.executeToolCalls(response.toolCalls, options);
-      for (const { call, result } of results) {
-        yield {
-          type: 'tool_result',
-          content: result.output,
-          toolName: call.name,
-          result,
-        };
-        state.messages.push({
-          role: 'tool_result',
-          toolCallId: call.id,
-          content: result.output,
-        });
-      }
-    }
   }
 
   private async *processStreamTurn(

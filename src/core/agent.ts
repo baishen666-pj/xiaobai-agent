@@ -90,6 +90,10 @@ export class XiaobaiAgent {
     return this.deps.plugins;
   }
 
+  getDeps(): AgentDeps {
+    return this.deps;
+  }
+
   getCurrentModel(): { provider: string; model: string } {
     const cfg = this.deps.config.get();
     return { provider: cfg.provider.default, model: cfg.model.default };

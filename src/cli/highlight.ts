@@ -1,16 +1,4 @@
-import { createRequire } from 'node:module';
 import chalk from 'chalk';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const require = createRequire(import.meta.url);
-
-// highlight.js doesn't export ./es/core in its exports map,
-// so we use createRequire + direct file path
-const hljsCorePath = join(__dirname, '../../node_modules/highlight.js/es/core.js');
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const hljs: any = require(hljsCorePath).default ?? require(hljsCorePath);
 
 const LANGUAGES = [
   'javascript', 'typescript', 'python', 'java', 'c', 'cpp',
@@ -18,11 +6,23 @@ const LANGUAGES = [
   'diff', 'markdown', 'plaintext',
 ];
 
-for (const lang of LANGUAGES) {
-  const langPath = join(__dirname, `../../node_modules/highlight.js/es/languages/${lang}.js`);
-  const mod = require(langPath);
-  hljs.registerLanguage(lang, mod.default ?? mod);
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let hljs: any = null;
+
+async function loadHljs(): Promise<void> {
+  const coreModule = await import('highlight.js/lib/core');
+  hljs = coreModule.default ?? coreModule;
+
+  const languageImports = LANGUAGES.map(async (lang) => {
+    const langModule = await import(`highlight.js/lib/languages/${lang}`);
+    const mod = langModule.default ?? langModule;
+    hljs.registerLanguage(lang, mod);
+  });
+
+  await Promise.all(languageImports);
 }
+
+const hljsReady = loadHljs();
 
 const LANG_ALIASES: Record<string, string> = {
   js: 'javascript', ts: 'typescript', sh: 'bash', shell: 'bash',
@@ -70,6 +70,8 @@ function htmlToAnsi(html: string): string {
 }
 
 export function highlightCode(code: string, lang?: string): string {
+  if (!hljs) return code;
+
   const resolvedLang = lang ? (LANG_ALIASES[lang] ?? lang) : undefined;
 
   try {
@@ -84,6 +86,8 @@ export function highlightCode(code: string, lang?: string): string {
     return code;
   }
 }
+
+export { hljsReady };
 
 export function getLanguageLabel(lang?: string): string {
   if (!lang) return '';

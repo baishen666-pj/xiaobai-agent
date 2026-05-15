@@ -75,14 +75,15 @@ export class GoogleProvider implements LLMProvider {
               yield { type: 'text_delta', text: part.text };
             }
             if (part.functionCall) {
+              const callId = `call_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
               yield {
                 type: 'tool_call_start',
-                toolCallId: `call_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+                toolCallId: callId,
                 toolCallName: part.functionCall.name,
               };
               yield {
                 type: 'tool_call_delta',
-                toolCallId: `call_${Date.now()}`,
+                toolCallId: callId,
                 toolCallDelta: JSON.stringify(part.functionCall.args),
               };
             }
