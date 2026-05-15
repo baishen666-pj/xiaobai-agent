@@ -5,6 +5,7 @@ import type { HookSystem } from '../hooks/system.js';
 import type { ConfigManager } from '../config/manager.js';
 import type { MemorySystem } from '../memory/system.js';
 import type { SecurityManager } from '../security/manager.js';
+import { CompactionEngine } from './compaction.js';
 
 export type StopReason =
   | 'completed'
@@ -26,7 +27,7 @@ export interface LoopState {
 }
 
 export interface LoopEvent {
-  type: 'thinking' | 'tool_call' | 'tool_result' | 'text' | 'error' | 'stop' | 'compact';
+  type: 'thinking' | 'tool_call' | 'tool_result' | 'text' | 'error' | 'stop' | 'compact' | 'stream';
   content: string;
   toolName?: string;
   toolArgs?: Record<string, unknown>;
@@ -39,6 +40,7 @@ export interface LoopOptions {
   abortSignal?: AbortSignal;
   onEvent?: (event: LoopEvent) => void;
   permissionCallback?: (tool: string, args: Record<string, unknown>) => Promise<boolean>;
+  stream?: boolean;
 }
 
 export class AgentLoop {
@@ -49,6 +51,7 @@ export class AgentLoop {
   private config: ConfigManager;
   private memory: MemorySystem;
   private security: SecurityManager;
+  private compaction: CompactionEngine;
 
   constructor(deps: {
     provider: ProviderRouter;
@@ -66,6 +69,7 @@ export class AgentLoop {
     this.config = deps.config;
     this.memory = deps.memory;
     this.security = deps.security;
+    this.compaction = new CompactionEngine(deps.provider);
   }
 
   async *run(
@@ -75,6 +79,7 @@ export class AgentLoop {
   ): AsyncGenerator<LoopEvent, void, void> {
     const cfg = this.config.get();
     const maxTurns = options.maxTurns ?? cfg.context.maxTurns;
+    const useStream = options.stream ?? false;
     const state: LoopState = {
       turn: 0,
       messages: [],
@@ -97,46 +102,14 @@ export class AgentLoop {
         state.turn++;
 
         const systemPrompt = await this.buildSystemPrompt(sessionId);
-        const response = await this.provider.chat(state.messages, {
-          system: systemPrompt,
-          tools: this.tools.getToolDefinitions(),
-        });
 
-        if (!response) {
-          state.stopReason = 'model_error';
-          yield { type: 'error', content: 'No response from provider' };
-          return;
+        if (useStream) {
+          yield* this.processStreamTurn(state, systemPrompt, options);
+        } else {
+          yield* this.processTurn(state, systemPrompt, options);
         }
 
-        state.totalTokens += response.usage?.totalTokens ?? 0;
-
-        if (response.content) {
-          state.messages.push({ role: 'assistant', content: response.content });
-          yield { type: 'text', content: response.content, tokens: response.usage?.totalTokens };
-
-          if (!response.toolCalls?.length) {
-            state.stopReason = 'completed';
-            yield { type: 'stop', content: 'Task completed' };
-            break;
-          }
-        }
-
-        if (response.toolCalls?.length) {
-          const results = await this.executeToolCalls(response.toolCalls, options);
-          for (const { call, result } of results) {
-            yield {
-              type: 'tool_result',
-              content: result.output,
-              toolName: call.name,
-              result,
-            };
-            state.messages.push({
-              role: 'tool_result',
-              toolCallId: call.id,
-              content: result.output,
-            });
-          }
-        }
+        if (state.stopReason) break;
 
         if (this.shouldCompact(state)) {
           yield { type: 'compact', content: 'Compressing context...' };
@@ -146,7 +119,7 @@ export class AgentLoop {
         await this.hooks.emit('post_turn', { state, sessionId });
       }
 
-      if (state.turn >= maxTurns) {
+      if (state.turn >= maxTurns && !state.stopReason) {
         state.stopReason = 'max_turns';
         yield { type: 'stop', content: `Reached max turns (${maxTurns})` };
       }
@@ -159,6 +132,94 @@ export class AgentLoop {
       if (cfg.memory.enabled) {
         await this.memory.flushIfDirty();
       }
+    }
+  }
+
+  private async *processTurn(
+    state: LoopState,
+    systemPrompt: string,
+    options: LoopOptions,
+  ): AsyncGenerator<LoopEvent, void, void> {
+    const response = await this.provider.chat(state.messages, {
+      system: systemPrompt,
+      tools: this.tools.getToolDefinitions(),
+    });
+
+    if (!response) {
+      state.stopReason = 'model_error';
+      yield { type: 'error', content: 'No response from provider' };
+      return;
+    }
+
+    state.totalTokens += response.usage?.totalTokens ?? 0;
+
+    if (response.content) {
+      state.messages.push({ role: 'assistant', content: response.content });
+      yield { type: 'text', content: response.content, tokens: response.usage?.totalTokens };
+
+      if (!response.toolCalls?.length) {
+        state.stopReason = 'completed';
+        yield { type: 'stop', content: 'Task completed' };
+        return;
+      }
+    }
+
+    if (response.toolCalls?.length) {
+      const results = await this.executeToolCalls(response.toolCalls, options);
+      for (const { call, result } of results) {
+        yield {
+          type: 'tool_result',
+          content: result.output,
+          toolName: call.name,
+          result,
+        };
+        state.messages.push({
+          role: 'tool_result',
+          toolCallId: call.id,
+          content: result.output,
+        });
+      }
+    }
+  }
+
+  private async *processStreamTurn(
+    state: LoopState,
+    systemPrompt: string,
+    options: LoopOptions,
+  ): AsyncGenerator<LoopEvent, void, void> {
+    let fullContent = '';
+    let totalTokens = 0;
+
+    try {
+      for await (const chunk of this.provider.chatStream(state.messages, {
+        system: systemPrompt,
+        tools: this.tools.getToolDefinitions(),
+        abortSignal: options.abortSignal,
+      })) {
+        switch (chunk.type) {
+          case 'text_delta':
+            fullContent += chunk.text ?? '';
+            yield { type: 'stream', content: chunk.text ?? '' };
+            break;
+          case 'usage':
+            totalTokens += chunk.usage?.totalTokens ?? 0;
+            break;
+          case 'done':
+            if (fullContent) {
+              state.messages.push({ role: 'assistant', content: fullContent });
+            }
+            state.totalTokens += totalTokens;
+            if (chunk.stopReason === 'tool_use') {
+              // Tool calls will follow in next turn
+            } else {
+              state.stopReason = 'completed';
+              yield { type: 'stop', content: 'Task completed' };
+            }
+            break;
+        }
+      }
+    } catch (error) {
+      yield { type: 'error', content: `Stream error: ${(error as Error).message}` };
     }
   }
 
@@ -238,22 +299,12 @@ export class AgentLoop {
   }
 
   private shouldCompact(state: LoopState): boolean {
-    const cfg = this.config.get();
-    const threshold = cfg.context.compressionThreshold;
-    return state.totalTokens - state.lastCompactTokens > 100_000 * threshold;
+    return this.compaction.shouldCompact(state.messages, state.totalTokens, state.lastCompactTokens);
   }
 
   private async compactContext(state: LoopState): Promise<void> {
-    const keep = this.config.get().context.keepLastN;
-    const messages = state.messages;
-    if (messages.length <= keep) return;
-
-    const oldMessages = messages.slice(0, -keep);
-    const summary = await this.provider.summarize(oldMessages);
-    state.messages = [
-      { role: 'system', content: `[Context Summary]\n${summary}` },
-      ...messages.slice(-keep),
-    ];
+    const result = await this.compaction.compact(state.messages);
+    state.messages = result.messages;
     state.lastCompactTokens = state.totalTokens;
   }
 }
