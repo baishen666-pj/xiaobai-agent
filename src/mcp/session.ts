@@ -117,6 +117,55 @@ export class MCPSession {
     return toolMap;
   }
 
+  // ── Deferred tool loading (from Claude Code pattern) ──
+  // Only load tool names initially; full schemas fetched on demand.
+
+  private toolNameCache = new Map<string, string[]>();
+  private fullToolCache = new Map<string, ToolDefinition[]>();
+
+  async discoverToolNames(): Promise<Map<string, string[]>> {
+    const nameMap = new Map<string, string[]>();
+    const connections = await this.connectAll();
+
+    for (const [serverName, conn] of connections) {
+      if (this.toolNameCache.has(serverName)) {
+        nameMap.set(serverName, this.toolNameCache.get(serverName)!);
+        continue;
+      }
+
+      const tools = await conn.listTools();
+      const names = tools.map((t) => t.name);
+      this.toolNameCache.set(serverName, names);
+      nameMap.set(serverName, names);
+    }
+
+    return nameMap;
+  }
+
+  async getFullToolDefinition(serverName: string, toolName: string): Promise<ToolDefinition | null> {
+    const cached = this.fullToolCache.get(serverName);
+    if (cached) {
+      return cached.find((t) => t.name === toolName) ?? null;
+    }
+
+    const conn = this.connections.get(serverName);
+    if (!conn) return null;
+
+    const tools = await conn.listTools();
+    this.fullToolCache.set(serverName, tools);
+    return tools.find((t) => t.name === toolName) ?? null;
+  }
+
+  clearToolCache(serverName?: string): void {
+    if (serverName) {
+      this.toolNameCache.delete(serverName);
+      this.fullToolCache.delete(serverName);
+    } else {
+      this.toolNameCache.clear();
+      this.fullToolCache.clear();
+    }
+  }
+
   async callTool(serverName: string, toolName: string, args: Record<string, unknown>): Promise<ToolResult> {
     const conn = this.connections.get(serverName);
     if (!conn || !conn.isAlive()) {
