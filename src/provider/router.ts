@@ -435,11 +435,15 @@ export class ProviderRouter {
   }
 
   private getEnvKey(provider: string): string | undefined {
-    const envMap: Record<string, string> = {
-      anthropic: 'ANTHROPIC_API_KEY',
-      openai: 'OPENAI_API_KEY',
-      google: 'GOOGLE_API_KEY',
+    const envMap: Record<string, string[]> = {
+      anthropic: ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'],
+      openai: ['OPENAI_API_KEY'],
+      google: ['GOOGLE_API_KEY'],
     };
-    return process.env[envMap[provider] ?? 'XIAOBAI_API_KEY'];
+    const keys = envMap[provider] ?? ['XIAOBAI_API_KEY'];
+    for (const key of keys) {
+      if (process.env[key]) return process.env[key];
+    }
+    return process.env['XIAOBAI_API_KEY'];
   }
 }
