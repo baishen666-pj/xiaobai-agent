@@ -193,4 +193,60 @@ export class ProviderRouter {
   static getAvailableProviders(): string[] {
     return Object.keys(PROVIDER_FACTORIES);
   }
+
+  // ── Dual-model routing (from Aider pattern) ──
+
+  async chatWithRole(
+    messages: Message[],
+    role: 'architect' | 'editor' | 'reviewer' | 'default',
+    options: ChatOptions = {},
+  ): Promise<ProviderResponse | null> {
+    const roleConfig = this.getRoleConfig(role);
+    const provider = this.getProvider(roleConfig.provider);
+    return provider.chat(messages, roleConfig.model, options);
+  }
+
+  async *chatStreamWithRole(
+    messages: Message[],
+    role: 'architect' | 'editor' | 'reviewer' | 'default',
+    options: ChatOptions = {},
+  ): AsyncGenerator<StreamChunk, void, void> {
+    const roleConfig = this.getRoleConfig(role);
+    const provider = this.getProvider(roleConfig.provider);
+    if (provider.chatStream) {
+      yield* provider.chatStream(messages, roleConfig.model, options);
+    } else {
+      const response = await provider.chat(messages, roleConfig.model, options);
+      if (response.content) yield { type: 'text_delta', text: response.content };
+      yield { type: 'done', stopReason: response.stopReason };
+    }
+  }
+
+  private getRoleConfig(role: string): { provider: string; model: string } {
+    const cfg = this.config;
+    const aux = cfg.auxiliary ?? {};
+
+    switch (role) {
+      case 'architect':
+        return {
+          provider: aux.architectProvider ?? cfg.provider.default,
+          model: aux.architectModel ?? cfg.model.default,
+        };
+      case 'editor':
+        return {
+          provider: aux.editorProvider ?? cfg.provider.default,
+          model: aux.editorModel ?? cfg.model.fallback ?? cfg.model.default,
+        };
+      case 'reviewer':
+        return {
+          provider: aux.reviewerProvider ?? cfg.provider.default,
+          model: aux.reviewerModel ?? cfg.model.default,
+        };
+      default:
+        return {
+          provider: cfg.provider.default,
+          model: cfg.model.default,
+        };
+    }
+  }
 }

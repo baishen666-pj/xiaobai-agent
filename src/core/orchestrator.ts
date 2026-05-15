@@ -27,6 +27,7 @@ export interface OrchestratorOptions {
   maxConcurrency?: number;
   maxRetries?: number;
   maxDepth?: number;
+  taskTimeoutMs?: number;
   abortSignal?: AbortSignal;
   onEvent?: (event: OrchestratorEvent) => void;
   source?: SessionSource;
@@ -34,6 +35,7 @@ export interface OrchestratorOptions {
 
 const DEFAULT_MAX_DEPTH = 1;
 const MAX_DEPTH_CAP = 3;
+const DEFAULT_TASK_TIMEOUT = 300_000; // 5 minutes
 
 interface AgentHandle {
   id: string;
@@ -56,11 +58,13 @@ export class Orchestrator {
   private results: TaskResult[] = [];
   private listeners: ((event: OrchestratorEvent) => void) = () => {};
   private maxDepth: number;
+  private taskTimeoutMs: number;
   private source: SessionSource;
 
   constructor(deps: AgentDeps, workspaceDir?: string) {
     this.deps = deps;
     this.maxDepth = DEFAULT_MAX_DEPTH;
+    this.taskTimeoutMs = DEFAULT_TASK_TIMEOUT;
     this.source = 'orchestrator';
     this.workspace = new Workspace(
       workspaceDir ?? join(process.cwd(), '.xiaobai', 'workspace'),
@@ -112,6 +116,7 @@ export class Orchestrator {
   async execute(options: OrchestratorOptions = {}): Promise<TaskResult[]> {
     const { maxConcurrency = 3, abortSignal } = options;
     this.maxDepth = Math.min(options.maxDepth ?? DEFAULT_MAX_DEPTH, MAX_DEPTH_CAP);
+    this.taskTimeoutMs = options.taskTimeoutMs ?? DEFAULT_TASK_TIMEOUT;
     this.source = options.source ?? 'orchestrator';
 
     if (options.onEvent) this.onEvent(options.onEvent);
@@ -188,21 +193,29 @@ export class Orchestrator {
       const sessionId = `orch_${this.source}_${task.id}`;
       const inputContext = this.buildTaskContext(task);
 
-      for await (const event of handle.loop.run(
-        `${task.description}\n\nContext:\n${inputContext}`,
-        sessionId,
-        {
-          maxTurns: handle.role.maxTurns,
-          abortSignal: options.abortSignal,
-          onEvent: (loopEvent) => {
-            this.emit({ type: 'task_progress', task, event: loopEvent });
+      const timeoutPromise = new Promise<void>((_, reject) => {
+        setTimeout(() => reject(new Error(`Task timed out after ${this.taskTimeoutMs}ms`)), this.taskTimeoutMs);
+      });
+
+      const runPromise = (async () => {
+        for await (const event of handle.loop.run(
+          `${task.description}\n\nContext:\n${inputContext}`,
+          sessionId,
+          {
+            maxTurns: handle.role.maxTurns,
+            abortSignal: options.abortSignal,
+            onEvent: (loopEvent) => {
+              this.emit({ type: 'task_progress', task, event: loopEvent });
+            },
           },
-        },
-      )) {
-        if (event.type === 'text') output += event.content;
-        if (event.type === 'stream') output += event.content;
-        if (event.tokens) tokensUsed += event.tokens;
-      }
+        )) {
+          if (event.type === 'text') output += event.content;
+          if (event.type === 'stream') output += event.content;
+          if (event.tokens) tokensUsed += event.tokens;
+        }
+      })();
+
+      await Promise.race([runPromise, timeoutPromise]);
 
       task.status = 'completed';
       task.completedAt = Date.now();

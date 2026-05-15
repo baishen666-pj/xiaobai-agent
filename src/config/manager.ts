@@ -44,6 +44,16 @@ export interface XiaobaiConfig {
     enabled: boolean;
     config?: Record<string, Record<string, unknown>>;
   };
+  auxiliary?: {
+    architectProvider?: string;
+    architectModel?: string;
+    editorProvider?: string;
+    editorModel?: string;
+    reviewerProvider?: string;
+    reviewerModel?: string;
+    compactProvider?: string;
+    compactModel?: string;
+  };
 }
 
 export interface ProviderConfig {
