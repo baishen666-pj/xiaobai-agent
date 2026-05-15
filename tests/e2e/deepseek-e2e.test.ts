@@ -110,7 +110,6 @@ describe.skipIf(!hasApiKey)('E2E: AgentLoop Tool Pipeline', () => {
   }, 30000);
 
   it('writes a file via tool call', async () => {
-    // DeepSeek can be slow on write tool calls
     const filePath = join(testDir, 'write-test.txt');
     const sessionId = agent.getDeps().sessions.createSession();
 
@@ -121,12 +120,11 @@ describe.skipIf(!hasApiKey)('E2E: AgentLoop Tool Pipeline', () => {
       // consume
     }
 
-    if (existsSync(filePath)) {
-      const { readFileSync } = await import('node:fs');
-      const content = readFileSync(filePath, 'utf-8');
-      expect(content).toContain('E2E_WRITE_OK');
-    }
-  }, 60000);
+    expect(existsSync(filePath)).toBe(true);
+    const { readFileSync } = await import('node:fs');
+    const content = readFileSync(filePath, 'utf-8');
+    expect(content).toContain('E2E_WRITE_OK');
+  }, 90000);
 
   it('runs bash command via tool call', async () => {
     const sessionId = agent.getDeps().sessions.createSession();

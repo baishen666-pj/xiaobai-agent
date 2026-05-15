@@ -24,9 +24,21 @@ function truncate(output: string, max = MAX_OUTPUT): string {
   return output.slice(0, half) + `\n\n... [truncated ${output.length - max} chars] ...\n\n` + output.slice(-half);
 }
 
+const SENSITIVE_PATHS_WIN = [
+  normalize(`${process.env.SYSTEMROOT ?? 'C:\\Windows'}\\System32`),
+  normalize(`${process.env.SYSTEMROOT ?? 'C:\\Windows'}\\SysWOW64`),
+  normalize(`${process.env.SYSTEMROOT ?? 'C:\\Windows'}\\config`),
+];
+const SENSITIVE_PATHS_UNIX = ['/etc/passwd', '/etc/shadow', '/etc/ssh', '/root/.ssh', '/boot', '/proc', '/sys/kernel'];
+
 function isPathSafe(filePath: string, allowedDirs?: string[]): boolean {
   const normalized = normalize(resolve(filePath));
   if (!isAbsolute(normalized)) return false;
+
+  // Block sensitive system paths
+  const sensitive = IS_WIN ? SENSITIVE_PATHS_WIN : SENSITIVE_PATHS_UNIX;
+  if (sensitive.some((p) => normalized.toLowerCase().startsWith(p.toLowerCase()))) return false;
+
   if (allowedDirs?.length) {
     return allowedDirs.some((dir) => normalized.startsWith(normalize(resolve(dir)) + sep) || normalized === normalize(resolve(dir)));
   }
@@ -171,6 +183,10 @@ const readTool = (context?: ToolContext): Tool => ({
       return { output: 'Only absolute paths are allowed', success: false, error: 'invalid_path' };
     }
 
+    if (!isPathSafe(absPath)) {
+      return { output: `Access denied: path outside allowed scope`, success: false, error: 'path_unsafe' };
+    }
+
     if (!existsSync(absPath)) {
       return { output: `File not found: ${absPath}`, success: false, error: 'file_not_found' };
     }
@@ -231,6 +247,10 @@ const writeTool = (context?: ToolContext): Tool => ({
       return { output: 'Only absolute paths are allowed', success: false, error: 'invalid_path' };
     }
 
+    if (!isPathSafe(absPath)) {
+      return { output: `Access denied: path outside allowed scope`, success: false, error: 'path_unsafe' };
+    }
+
     if (context?.sandbox && !context.sandbox.canWrite(absPath, process.cwd())) {
       return { output: `Write denied by sandbox policy: ${absPath}`, success: false, error: 'sandbox_denied' };
     }
@@ -276,6 +296,10 @@ const editTool = (context?: ToolContext): Tool => ({
     const absPath = resolve(file_path);
     if (!isAbsolute(file_path)) {
       return { output: 'Only absolute paths are allowed', success: false, error: 'invalid_path' };
+    }
+
+    if (!isPathSafe(absPath)) {
+      return { output: `Access denied: path outside allowed scope`, success: false, error: 'path_unsafe' };
     }
 
     if (!existsSync(absPath)) {

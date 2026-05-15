@@ -19,11 +19,13 @@ export class GoogleProvider implements LLMProvider {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
+      signal: options.abortSignal ?? undefined,
     });
 
     if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Google API error: ${response.status} ${error}`);
+      const errorBody = await response.text();
+      const safeMessage = errorBody.length > 200 ? errorBody.slice(0, 200) + '...' : errorBody;
+      throw new Error(`Google API error: ${response.status}`);
     }
 
     const data = await response.json() as any;
@@ -38,11 +40,13 @@ export class GoogleProvider implements LLMProvider {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
+      signal: options.abortSignal ?? undefined,
     });
 
     if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Google API error: ${response.status} ${error}`);
+      const errorBody = await response.text();
+      const safeMessage = errorBody.length > 200 ? errorBody.slice(0, 200) + '...' : errorBody;
+      throw new Error(`Google API error: ${response.status}`);
     }
 
     const reader = response.body?.getReader();

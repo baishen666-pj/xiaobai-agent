@@ -32,7 +32,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
         type: 'function' as const,
         function: { name: t.name, description: t.description, parameters: t.parameters },
       })),
-    });
+    }, { signal: options.abortSignal ?? undefined });
 
     const choice = response.choices[0];
     return {
@@ -62,7 +62,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
         type: 'function' as const,
         function: { name: t.name, description: t.description, parameters: t.parameters },
       })),
-    });
+    }, { signal: options.abortSignal ?? undefined });
 
     const toolCallStates = new Map<number, { id: string; name: string; args: string }>();
     let lastFinishReason: string | undefined;

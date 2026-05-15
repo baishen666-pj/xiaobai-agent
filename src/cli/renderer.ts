@@ -1,4 +1,5 @@
 import chalk from 'chalk';
+import { readFileSync } from 'node:fs';
 import { highlightCode, getLanguageLabel } from './highlight.js';
 
 export interface SpinnerOptions {
@@ -220,10 +221,11 @@ export function getTerminalWidth(): number {
 }
 
 export function printBanner(): void {
+  const pkg = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf-8'));
   console.log(chalk.cyan.bold('\n  ╦ ╦┌┐┌┌─┐┬─┐┌┬┐'));
   console.log(chalk.cyan.bold('  ║║║││││  ├┬┘│││'));
   console.log(chalk.cyan.bold('  ╚╩╝┘└┘└─┘┴└─┴ ┴'));
-  console.log(chalk.gray('  v0.1.0 — AI Agent Framework\n'));
+  console.log(chalk.gray(`  v${pkg.version} — AI Agent Framework\n`));
 }
 
 export function printHelp(): void {

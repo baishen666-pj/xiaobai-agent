@@ -22,6 +22,8 @@ export interface Session {
   totalTokens: number;
 }
 
+const SAFE_SESSION_ID = /^session_\d+_[a-f0-9]{8}$/;
+
 export class SessionManager {
   private sessionsDir: string;
 
@@ -39,6 +41,7 @@ export class SessionManager {
   }
 
   async loadMessages(sessionId: string): Promise<Message[]> {
+    this.validateSessionId(sessionId);
     const path = this.getSessionPath(sessionId);
     if (!existsSync(path)) return [];
     try {
@@ -50,9 +53,8 @@ export class SessionManager {
   }
 
   async saveMessages(sessionId: string, messages: Message[]): Promise<void> {
+    this.validateSessionId(sessionId);
     const path = this.getSessionPath(sessionId);
-    const dir = join(path, '..');
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
     writeFileSync(path, JSON.stringify(messages, null, 2), 'utf-8');
   }
 
@@ -77,6 +79,7 @@ export class SessionManager {
   }
 
   deleteSession(sessionId: string): boolean {
+    this.validateSessionId(sessionId);
     const path = this.getSessionPath(sessionId);
     if (!existsSync(path)) return false;
     try {
@@ -84,6 +87,12 @@ export class SessionManager {
       return true;
     } catch {
       return false;
+    }
+  }
+
+  private validateSessionId(sessionId: string): void {
+    if (!SAFE_SESSION_ID.test(sessionId)) {
+      throw new Error(`Invalid session ID: ${sessionId.slice(0, 20)}`);
     }
   }
 
