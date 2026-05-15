@@ -149,12 +149,11 @@ export class ConfigManager {
     };
   }
 
-  get(): XiaobaiConfig {
+  get(): XiaobaiConfig;
+  get<K extends keyof XiaobaiConfig>(key: K): XiaobaiConfig[K];
+  get(key?: keyof XiaobaiConfig): XiaobaiConfig | XiaobaiConfig[keyof XiaobaiConfig] {
+    if (key !== undefined) return this.config[key];
     return this.config;
-  }
-
-  get<K extends keyof XiaobaiConfig>(key: K): XiaobaiConfig[K] {
-    return this.config[key];
   }
 
   save(config: Partial<XiaobaiConfig>): void {

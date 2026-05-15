@@ -1,8 +1,12 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
 import { XiaobaiAgent } from '../core/agent.js';
+import { Orchestrator } from '../core/orchestrator.js';
+import { DashboardServer } from '../server/index.js';
+import { listRoles } from '../core/roles.js';
 import chalk from 'chalk';
 import { createInterface } from 'node:readline';
+import { exec } from 'node:child_process';
 
 const program = new Command();
 
@@ -17,7 +21,7 @@ program
   .option('-m, --model <model>', 'Override default model')
   .option('-p, --profile <profile>', 'Use a specific profile')
   .option('--sandbox <mode>', 'Sandbox mode: read-only | workspace-write | full-access')
-  .action(async (options) => {
+  .action(async (options: Record<string, string>) => {
     console.log(chalk.cyan.bold('\n  Xiaobai Agent v0.1.0'));
     console.log(chalk.gray('  Fusion of Hermes + OpenClaw + Claude Code + Codex\n'));
 
@@ -106,7 +110,7 @@ program
   .command('exec <prompt>')
   .description('Execute a single prompt and exit')
   .option('-m, --model <model>', 'Override default model')
-  .action(async (prompt, options) => {
+  .action(async (prompt: string, _options: Record<string, string>) => {
     try {
       const agent = await XiaobaiAgent.create();
       const response = await agent.chatSync(prompt);
@@ -146,5 +150,139 @@ program
         console.log(JSON.stringify(config.get(), null, 2));
       }),
   );
+
+program
+  .command('dashboard')
+  .description('Start the real-time agent dashboard')
+  .option('-p, --port <port>', 'Server port', '3001')
+  .option('--no-open', 'Do not open browser automatically')
+  .action(async (options: { port: string; open: boolean }) => {
+    const port = parseInt(options.port, 10);
+
+    const server = new DashboardServer({
+      port,
+      staticDir: undefined,
+    });
+
+    await server.start();
+
+    const httpUrl = server.getHttpUrl();
+    const wsUrl = server.getUrl();
+
+    console.log(chalk.cyan.bold('\n  Xiaobai Dashboard'));
+    console.log(chalk.gray(`  HTTP:  ${httpUrl}`));
+    console.log(chalk.gray(`  WS:    ${wsUrl}`));
+    console.log(chalk.gray(`  Health: ${httpUrl}/health\n`));
+
+    if (options.open) {
+      const cmd = process.platform === 'win32' ? 'start' : process.platform === 'darwin' ? 'open' : 'xdg-open';
+      exec(`${cmd} ${httpUrl}`);
+    }
+
+    process.on('SIGINT', async () => {
+      console.log(chalk.gray('\nShutting down...'));
+      await server.stop();
+      process.exit(0);
+    });
+  });
+
+program
+  .command('run <prompt>')
+  .description('Run a task through the multi-agent orchestrator')
+  .option('-r, --role <role>', 'Agent role to use', 'coordinator')
+  .option('-p, --port <port>', 'Dashboard port (starts dashboard if set)', '')
+  .option('-c, --concurrency <n>', 'Max concurrent agents', '3')
+  .action(async (prompt: string, options: { role: string; port: string; concurrency: string }) => {
+    let server: DashboardServer | undefined;
+
+    try {
+      const agent = await XiaobaiAgent.create();
+
+      if (options.port) {
+        server = new DashboardServer({
+          port: parseInt(options.port, 10),
+        });
+        await server.start();
+        console.log(chalk.gray(`Dashboard: ${server.getHttpUrl()}`));
+      }
+
+      const orch = new Orchestrator({
+        config: (agent as any).deps.config,
+        provider: (agent as any).deps.provider,
+        tools: (agent as any).deps.tools,
+        sessions: (agent as any).deps.sessions,
+        hooks: (agent as any).deps.hooks,
+        memory: (agent as any).deps.memory,
+        security: (agent as any).deps.security,
+      });
+
+      if (server) {
+        server.attachOrchestrator(orch);
+      }
+
+      orch.addTask({
+        description: prompt,
+        role: options.role,
+      });
+
+      const events: string[] = [];
+      orch.onEvent((event) => {
+        switch (event.type) {
+          case 'task_started':
+            events.push(`[${event.agentId}] Started: ${event.task?.description?.slice(0, 60)}`);
+            break;
+          case 'task_completed':
+            events.push(`[done] ${event.task?.description?.slice(0, 60)} (${event.result?.tokensUsed ?? 0} tokens)`);
+            break;
+          case 'task_failed':
+            events.push(`[fail] ${event.error}`);
+            break;
+        }
+      });
+
+      console.log(chalk.cyan(`\nRunning: "${prompt}"`));
+      console.log(chalk.gray(`Role: ${options.role}, Concurrency: ${options.concurrency}\n`));
+
+      const results = await orch.execute({
+        maxConcurrency: parseInt(options.concurrency, 10),
+      });
+
+      for (const e of events) {
+        console.log(chalk.gray(`  ${e}`));
+      }
+
+      console.log(chalk.cyan('\n--- Results ---'));
+      for (const result of results) {
+        const icon = result.success ? chalk.green('✓') : chalk.red('✗');
+        console.log(`${icon} ${result.taskId}: ${result.output.slice(0, 200)}`);
+        if (result.error) {
+          console.log(chalk.red(`  Error: ${result.error}`));
+        }
+      }
+
+      console.log(chalk.gray(`\nTotal tokens: ${results.reduce((sum, r) => sum + r.tokensUsed, 0)}`));
+    } catch (error) {
+      console.error(chalk.red('Error:'), (error as Error).message);
+      process.exit(1);
+    } finally {
+      if (server) await server.stop();
+    }
+  });
+
+program
+  .command('agents')
+  .description('List available agent roles')
+  .action(() => {
+    const roles = listRoles();
+    console.log(chalk.cyan.bold('\n  Available Agent Roles\n'));
+    for (const role of roles) {
+      const tools = role.allowedTools === '*' ? 'all' : (role.allowedTools as string[]).join(', ');
+      console.log(`  ${chalk.yellow(role.id.padEnd(14))} ${role.name}`);
+      console.log(`  ${' '.repeat(14)} ${chalk.gray(role.description)}`);
+      console.log(`  ${' '.repeat(14)} Tools: ${chalk.gray(tools)}`);
+      console.log(`  ${' '.repeat(14)} Max turns: ${chalk.gray(String(role.maxTurns ?? 'default'))}`);
+      console.log();
+    }
+  });
 
 program.parse();

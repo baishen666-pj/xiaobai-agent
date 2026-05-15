@@ -84,19 +84,19 @@ export class ProviderRouter {
       tools: options.tools?.map((t) => ({
         name: t.name,
         description: t.description,
-        input_schema: t.parameters as unknown as Record<string, unknown>,
+        input_schema: { ...t.parameters } as any,
       })),
     });
 
-    const textBlock = response.content.find((b) => b.type === 'text');
-    const toolBlocks = response.content.filter((b) => b.type === 'tool_use');
+    const textBlock = response.content.find((b) => b.type === 'text') as any;
+    const toolBlocks = response.content.filter((b) => b.type === 'tool_use') as any[];
 
     return {
-      content: textBlock && 'text' in textBlock ? textBlock.text : undefined,
-      toolCalls: toolBlocks.map((b) => ({
-        id: 'id' in b ? (b as { id: string }).id : '',
-        name: 'name' in b ? (b as { name: string }).name : '',
-        arguments: 'input' in b ? ((b as { input: Record<string, unknown> }).input) : {},
+      content: textBlock?.text ?? undefined,
+      toolCalls: toolBlocks.map((b: any) => ({
+        id: b.id ?? '',
+        name: b.name ?? '',
+        arguments: b.input ?? {},
       })),
       usage: {
         promptTokens: response.usage.input_tokens,
@@ -121,7 +121,8 @@ export class ProviderRouter {
     const formatted = messages.map((m) => ({
       role: m.role === 'tool_result' ? 'tool' as const : m.role as 'user' | 'assistant' | 'system',
       content: m.content,
-    }));
+      ...(m.role === 'tool_result' && 'toolCallId' in m ? { tool_call_id: (m as any).toolCallId } : {}),
+    })) as any[];
 
     if (options.system) {
       formatted.unshift({ role: 'system', content: options.system });
