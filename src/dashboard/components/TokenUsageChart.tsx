@@ -1,8 +1,9 @@
-import type { TaskInfo } from '../hooks/useWebSocket.js';
+import type { TaskInfo, TokenHistoryEntry } from '../hooks/useWebSocket.js';
 
 interface Props {
   total: number;
   tasks: TaskInfo[];
+  tokenHistory?: TokenHistoryEntry[];
 }
 
 const ROLE_COLORS: Record<string, string> = {
@@ -14,7 +15,8 @@ const ROLE_COLORS: Record<string, string> = {
   coordinator: 'oklch(55% 0.15 200)',
 };
 
-export function TokenUsageChart({ total, tasks }: Props) {
+export function TokenUsageChart({ total, tasks: _tasks }: Props) {
+  const tasks = _tasks;
   const completedTasks = tasks.filter((t) => t.status === 'completed' && (t.tokensUsed ?? 0) > 0);
   const maxTokens = Math.max(...completedTasks.map((t) => t.tokensUsed ?? 0), 1);
 

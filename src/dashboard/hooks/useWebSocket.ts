@@ -5,6 +5,7 @@ export interface AgentInfo {
   role: string;
   busy: boolean;
   currentTask?: string;
+  cost?: number;
 }
 
 export interface TaskInfo {
@@ -12,9 +13,21 @@ export interface TaskInfo {
   description: string;
   role: string;
   status: string;
+  priority?: string;
   startedAt?: number;
   completedAt?: number;
   tokensUsed?: number;
+  retries?: number;
+  maxRetries?: number;
+  dependencies?: string[];
+  parentTaskId?: string;
+}
+
+export interface TokenHistoryEntry {
+  timestamp: number;
+  tokens: number;
+  taskId: string;
+  role: string;
 }
 
 export interface LogEvent {
@@ -48,10 +61,19 @@ interface DashboardState {
   chatMessages: ChatMessage[];
   chatTokenTotal: number;
   eventFilter: string;
+  tokenHistory: TokenHistoryEntry[];
+  progressEvents: Record<string, string[]>;
 }
+
+const MAX_RECONNECT_DELAY = 30_000;
 
 export function useWebSocket(url: string) {
   const wsRef = useRef<WebSocket | null>(null);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reconnectAttemptsRef = useRef(0);
+  const shouldReconnectRef = useRef(false);
+  const urlRef = useRef(url);
+
   const [state, setState] = useState<DashboardState>({
     connected: false,
     events: [],
@@ -61,6 +83,8 @@ export function useWebSocket(url: string) {
     chatMessages: [],
     chatTokenTotal: 0,
     eventFilter: 'all',
+    tokenHistory: [],
+    progressEvents: {},
   });
 
   const addEvent = useCallback((type: string, message: string) => {
@@ -84,6 +108,11 @@ export function useWebSocket(url: string) {
               description: t.description,
               role: t.role,
               status: t.status,
+              priority: t.priority,
+              retries: t.retries,
+              maxRetries: t.maxRetries,
+              dependencies: t.dependencies,
+              parentTaskId: t.parentTaskId,
             }));
             return { ...prev, tasks };
           });
@@ -103,23 +132,39 @@ export function useWebSocket(url: string) {
           addEvent('task_started', `Task started: ${(data.task as any)?.description?.slice(0, 60)}`);
           break;
 
-        case 'task_progress':
+        case 'task_progress': {
+          const taskId = (data.task as any)?.id;
+          const progressMsg = (data.event as any)?.content?.slice(0, 200);
+          if (taskId && progressMsg) {
+            setState((prev) => ({
+              ...prev,
+              progressEvents: {
+                ...prev.progressEvents,
+                [taskId]: [...(prev.progressEvents[taskId] || []).slice(-49), progressMsg],
+              },
+            }));
+            addEvent('task_progress', `${taskId}: ${progressMsg.slice(0, 60)}`);
+          }
           break;
+        }
 
         case 'task_completed':
           setState((prev) => {
             const result = data.result as any;
             const tokens = result?.tokensUsed ?? 0;
+            const task = data.task as any;
+            const role = task?.role ?? 'unknown';
             return {
               ...prev,
               tasks: prev.tasks.map((t) =>
-                t.id === (data.task as any)?.id
+                t.id === task?.id
                   ? { ...t, status: 'completed', completedAt: Date.now(), tokensUsed: tokens }
                   : t,
               ),
               tokenTotal: prev.tokenTotal + tokens,
+              tokenHistory: [...prev.tokenHistory.slice(-199), { timestamp: Date.now(), tokens, taskId: task?.id, role }],
               agents: prev.agents.map((a) =>
-                a.currentTask === (data.task as any)?.id ? { ...a, busy: false, currentTask: undefined } : a
+                a.currentTask === task?.id ? { ...a, busy: false, currentTask: undefined } : a
               ),
             };
           });
@@ -148,7 +193,13 @@ export function useWebSocket(url: string) {
         case 'agent_status':
           setState((prev) => ({
             ...prev,
-            agents: data.agents as AgentInfo[],
+            agents: (data.agents as any[]).map((a) => ({
+              id: a.id,
+              role: a.role,
+              busy: a.busy,
+              currentTask: a.currentTask,
+              cost: a.cost,
+            })),
           }));
           break;
 
@@ -237,10 +288,15 @@ export function useWebSocket(url: string) {
   const connect = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
 
+    shouldReconnectRef.current = true;
+    reconnectAttemptsRef.current = 0;
+    urlRef.current = url;
+
     const ws = new WebSocket(url);
 
     ws.onopen = () => {
       setState((prev) => ({ ...prev, connected: true }));
+      reconnectAttemptsRef.current = 0;
       addEvent('connected', `Connected to ${url}`);
     };
 
@@ -254,6 +310,16 @@ export function useWebSocket(url: string) {
     ws.onclose = () => {
       setState((prev) => ({ ...prev, connected: false }));
       addEvent('disconnected', 'Connection closed');
+
+      if (shouldReconnectRef.current) {
+        const delay = Math.min(1000 * Math.pow(2, reconnectAttemptsRef.current), MAX_RECONNECT_DELAY);
+        reconnectAttemptsRef.current += 1;
+        reconnectTimerRef.current = setTimeout(() => {
+          if (shouldReconnectRef.current) {
+            connect();
+          }
+        }, delay);
+      }
     };
 
     ws.onerror = () => {
@@ -264,12 +330,21 @@ export function useWebSocket(url: string) {
   }, [url, handleMessage, addEvent]);
 
   const disconnect = useCallback(() => {
+    shouldReconnectRef.current = false;
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
     wsRef.current?.close();
     wsRef.current = null;
   }, []);
 
   useEffect(() => {
     return () => {
+      shouldReconnectRef.current = false;
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current);
+      }
       wsRef.current?.close();
     };
   }, []);

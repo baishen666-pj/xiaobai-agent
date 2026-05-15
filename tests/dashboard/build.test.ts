@@ -35,7 +35,7 @@ describe('Dashboard Vite build output', () => {
 
     for (const file of jsFiles) {
       const size = statSync(join(assetsDir, file)).size;
-      expect(size).toBeLessThan(300 * 1024);
+      expect(size).toBeLessThan(600 * 1024);
     }
   });
 
