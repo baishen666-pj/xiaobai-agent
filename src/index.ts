@@ -16,3 +16,5 @@ export { createTask, isTaskReady, sortTasksByPriority, type Task, type TaskResul
 export { Workspace, type WorkspaceEntry } from './core/workspace.js';
 export { DashboardServer, type DashboardServerOptions } from './server/index.js';
 export { EventBridge } from './server/eventBridge.js';
+export { PluginManager } from './plugins/manager.js';
+export type { Plugin, PluginManifest, PluginAPI, PluginState, PluginError, PluginInfo, PluginPermission } from './plugins/types.js';

@@ -40,9 +40,19 @@ const PROVIDER_FACTORIES: Record<string, (config: ProviderConfig) => LLMProvider
 export class ProviderRouter {
   private config: XiaobaiConfig;
   private providers = new Map<string, LLMProvider>();
+  private pluginFactories = new Map<string, (config: ProviderConfig) => LLMProvider>();
 
   constructor(config: XiaobaiConfig) {
     this.config = config;
+  }
+
+  registerProviderFactory(name: string, factory: (config: ProviderConfig) => LLMProvider): void {
+    this.pluginFactories.set(name, factory);
+  }
+
+  unregisterProviderFactory(name: string): void {
+    this.pluginFactories.delete(name);
+    this.providers.delete(name);
   }
 
   private getProvider(providerName?: string): LLMProvider {
@@ -52,6 +62,15 @@ export class ProviderRouter {
     if (cached) return cached;
 
     const factory = PROVIDER_FACTORIES[name];
+    const pluginFactory = this.pluginFactories.get(name);
+
+    if (pluginFactory) {
+      const apiKey = this.config.provider.apiKey ?? this.getEnvKey(name);
+      const provider = pluginFactory({ name, apiKey, baseUrl: this.config.provider.baseUrl });
+      this.providers.set(name, provider);
+      return provider;
+    }
+
     if (!factory) {
       // Unknown provider — treat as OpenAI-compatible with custom base URL
       const provider = new OpenAICompatibleProvider({

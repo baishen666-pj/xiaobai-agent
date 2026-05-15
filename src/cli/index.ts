@@ -3,6 +3,7 @@ import { Command } from 'commander';
 import { XiaobaiAgent } from '../core/agent.js';
 import { Orchestrator } from '../core/orchestrator.js';
 import { DashboardServer } from '../server/index.js';
+import { SkillSystem } from '../skills/system.js';
 import { listRoles } from '../core/roles.js';
 import { createInterface } from 'node:readline';
 import { exec } from 'node:child_process';
@@ -23,6 +24,7 @@ program
   .option('-p, --profile <profile>', 'Use a specific profile')
   .option('--sandbox <mode>', 'Sandbox mode: read-only | workspace-write | full-access')
   .option('--auto', 'Auto-approve all tool calls')
+  .option('--dashboard [port]', 'Enable dashboard with optional port')
   .action(async (options: Record<string, string>) => {
     printBanner();
 
@@ -41,6 +43,17 @@ program
       let totalTokens = 0;
       let turnCount = 0;
 
+      let dashServer: DashboardServer | undefined;
+      let chatListener: ((event: any) => void) | undefined;
+
+      if (options.dashboard) {
+        const port = parseInt(options.dashboard, 10) || 3001;
+        dashServer = new DashboardServer({ port });
+        await dashServer.start();
+        chatListener = dashServer.getBridge().createChatListener('default');
+        console.log(chalk.gray(`  Dashboard: ${dashServer.getHttpUrl()}\n`));
+      }
+
       const prompt = () => {
         rl.question(chalk.green('> '), async (input) => {
           const trimmed = input.trim();
@@ -49,6 +62,7 @@ program
           if (trimmed === '/exit' || trimmed === '/quit') {
             console.log(chalk.gray(`\n  Turns: ${turnCount}, Tokens: ${formatTokenUsage(totalTokens)}`));
             console.log(chalk.gray('  Goodbye!\n'));
+            if (dashServer) await dashServer.stop();
             rl.close();
             process.exit(0);
           }
@@ -126,6 +140,7 @@ program
               stream: true,
               permissionCallback: (tool, args) => permPrompt.checkPermission(tool, args),
             })) {
+              chatListener?.(event);
               switch (event.type) {
                 case 'text':
                   spinner.stop();
@@ -194,14 +209,26 @@ program
   .description('Execute a single prompt and exit')
   .option('-m, --model <model>', 'Override default model')
   .option('--stream', 'Stream output in real-time')
+  .option('--dashboard [port]', 'Enable dashboard with optional port')
   .action(async (prompt: string, options: Record<string, string>) => {
+    let dashServer: DashboardServer | undefined;
     try {
       const agent = await XiaobaiAgent.create();
       const spinner = new Spinner();
+      let chatListener: ((event: any) => void) | undefined;
+
+      if (options.dashboard) {
+        const port = parseInt(options.dashboard, 10) || 3001;
+        dashServer = new DashboardServer({ port });
+        await dashServer.start();
+        chatListener = dashServer.getBridge().createChatListener('exec');
+        console.log(chalk.gray(`Dashboard: ${dashServer.getHttpUrl()}`));
+      }
 
       if (options.stream) {
         spinner.start('Thinking...');
         for await (const event of agent.chat(prompt)) {
+          chatListener?.(event);
           if (event.type === 'text' || event.type === 'stream') {
             spinner.stop();
             process.stdout.write(renderMarkdown(event.content));
@@ -223,6 +250,8 @@ program
     } catch (error) {
       console.error(chalk.red('Error:'), (error as Error).message);
       process.exit(1);
+    } finally {
+      if (dashServer) await dashServer.stop();
     }
   });
 
@@ -396,7 +425,10 @@ program
         }
         console.log(chalk.cyan.bold(`\n  Installed Skills (${list.length})\n`));
         for (const skill of list) {
-          console.log(`  ${chalk.yellow(skill.name.padEnd(20))} ${chalk.gray(skill.category)} ${skill.description}`);
+          const src = skill.source === 'builtin' ? chalk.blue('[builtin]') :
+            skill.source === 'installed' ? chalk.magenta('[installed]') :
+            chalk.green('[user]');
+          console.log(`  ${src} ${chalk.yellow(skill.name.padEnd(20))} ${chalk.gray(skill.category)} ${skill.description}`);
         }
         console.log();
       }),
@@ -465,8 +497,133 @@ program
         }
         console.log();
       }),
+  )
+  .addCommand(
+    new Command('install-builtin')
+      .description('Install built-in skill templates')
+      .argument('[name]', 'Skill name (installs all if omitted)')
+      .action(async (name?: string) => {
+        const agent = await XiaobaiAgent.create();
+        const skills = agent.getSkills();
+        if (!skills) { console.log(chalk.red('Skills not enabled.')); return; }
+        const installed = await skills.installBuiltin(name);
+        if (installed.length === 0) {
+          console.log(chalk.gray('  All built-in skills already installed or none found.'));
+        } else {
+          for (const s of installed) {
+            console.log(chalk.green(`  Installed: ${s}`));
+          }
+        }
+      }),
+  )
+  .addCommand(
+    new Command('builtins')
+      .description('List available built-in skill templates')
+      .action(() => {
+        const names = SkillSystem.listBuiltinNames();
+        console.log(chalk.cyan.bold(`\n  Built-in Skill Templates (${names.length})\n`));
+        for (const name of names) {
+          console.log(`  ${chalk.yellow(name)}`);
+        }
+        console.log(chalk.gray('\n  Install with: xiaobai skills install-builtin [name]\n'));
+      }),
   );
 
 import chalk from 'chalk';
+
+program
+  .command('plugins')
+  .description('Manage plugins')
+  .addCommand(
+    new Command('list')
+      .description('List installed plugins')
+      .action(async () => {
+        const agent = await XiaobaiAgent.create();
+        const plugins = agent.getPlugins();
+        if (!plugins) {
+          console.log(chalk.gray('Plugins system not enabled.'));
+          return;
+        }
+        const list = plugins.list();
+        if (list.length === 0) {
+          console.log(chalk.gray('No plugins installed. Create one with: xiaobai plugins create <name>'));
+          return;
+        }
+        console.log(chalk.cyan.bold(`\n  Installed Plugins (${list.length})\n`));
+        for (const info of list) {
+          const stateColor = info.state === 'activated' ? chalk.green :
+            info.state === 'error' ? chalk.red : chalk.gray;
+          console.log(`  ${chalk.yellow(info.name.padEnd(20))} ${stateColor(info.state.padEnd(14))} v${info.version} ${chalk.gray(info.description)}`);
+        }
+        console.log();
+      }),
+  )
+  .addCommand(
+    new Command('create <name>')
+      .description('Scaffold a new plugin')
+      .option('-d, --description <desc>', 'Plugin description', '')
+      .action(async (name: string, options: { description: string }) => {
+        const { writeFileSync, mkdirSync } = await import('node:fs');
+        const { join } = await import('node:path');
+        const { homedir } = await import('node:os');
+        const dir = join(homedir(), '.xiaobai', 'default', 'plugins', name);
+        const desc = options.description || `${name} plugin`;
+        mkdirSync(dir, { recursive: true });
+
+        writeFileSync(join(dir, 'plugin.json'), JSON.stringify({
+          name,
+          version: '1.0.0',
+          description: desc,
+          permissions: ['tools:register', 'hooks:subscribe'],
+        }, null, 2));
+
+        writeFileSync(join(dir, 'index.js'), `export default {
+  manifest: ${JSON.stringify({ name, version: '1.0.0', description: desc, permissions: ['tools:register', 'hooks:subscribe'] })},
+
+  async init(api) {
+    api.logger.info('Plugin initialized');
+  },
+
+  async activate() {
+    // Register tools, hooks, providers here
+  },
+
+  async deactivate() {
+    // Cleanup here
+  },
+};
+`);
+
+        console.log(chalk.green(`  Created plugin: ${name}`));
+        console.log(chalk.gray(`  Directory: ${dir}`));
+        console.log(chalk.gray(`  Edit plugin.json and index.js to customize.`));
+      }),
+  )
+  .addCommand(
+    new Command('install <source>')
+      .description('Install a plugin from a local directory')
+      .action(async (source: string) => {
+        const agent = await XiaobaiAgent.create();
+        const plugins = agent.getPlugins();
+        if (!plugins) { console.log(chalk.red('Plugins not enabled.')); return; }
+        try {
+          await plugins.install(source);
+          console.log(chalk.green(`  Installed plugin from: ${source}`));
+        } catch (err) {
+          console.log(chalk.red(`  ${(err as Error).message}`));
+        }
+      }),
+  )
+  .addCommand(
+    new Command('uninstall <name>')
+      .description('Uninstall a plugin')
+      .action(async (name: string) => {
+        const agent = await XiaobaiAgent.create();
+        const plugins = agent.getPlugins();
+        if (!plugins) { console.log(chalk.red('Plugins not enabled.')); return; }
+        await plugins.uninstall(name);
+        console.log(chalk.green(`  Uninstalled plugin: ${name}`));
+      }),
+  );
 
 program.parse();

@@ -9,6 +9,8 @@ import { SecurityManager } from '../security/manager.js';
 import { MCPSession } from '../mcp/session.js';
 import { SandboxManager } from '../sandbox/manager.js';
 import { SkillSystem } from '../skills/system.js';
+import type { PluginManager } from '../plugins/manager.js';
+import { join } from 'node:path';
 
 export interface AgentDeps {
   config: ConfigManager;
@@ -21,6 +23,7 @@ export interface AgentDeps {
   mcp?: MCPSession;
   sandbox?: SandboxManager;
   skills?: SkillSystem;
+  plugins?: PluginManager;
 }
 
 export class XiaobaiAgent {
@@ -83,6 +86,16 @@ export class XiaobaiAgent {
     return this.deps.skills;
   }
 
+  getPlugins(): PluginManager | undefined {
+    return this.deps.plugins;
+  }
+
+  async destroy(): Promise<void> {
+    if (this.deps.plugins) {
+      await this.deps.plugins.deactivateAll();
+    }
+  }
+
   static async create(configDir?: string): Promise<XiaobaiAgent> {
     const config = new ConfigManager();
     const cfg = config.get();
@@ -104,6 +117,22 @@ export class XiaobaiAgent {
       await skills.loadAll();
     }
 
+    let plugins: PluginManager | undefined;
+    if (cfg.plugins?.enabled) {
+      const { PluginManager } = await import('../plugins/manager.js');
+      const pluginsDir = join(config.getConfigDir(), 'plugins');
+      plugins = new PluginManager({
+        tools,
+        hooks,
+        config,
+        memory,
+        providers: provider,
+        pluginsDir,
+      });
+      await plugins.init();
+      await plugins.activateAll();
+    }
+
     return new XiaobaiAgent({
       config,
       provider,
@@ -115,6 +144,7 @@ export class XiaobaiAgent {
       mcp,
       sandbox,
       skills,
+      plugins,
     });
   }
 }

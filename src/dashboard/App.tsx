@@ -4,12 +4,21 @@ import { AgentStatusPanel } from './components/AgentStatusPanel.js';
 import { TaskFlowView } from './components/TaskFlowView.js';
 import { TokenUsageChart } from './components/TokenUsageChart.js';
 import { EventLog } from './components/EventLog.js';
+import { ChatEventPanel } from './components/ChatEventPanel.js';
+import { EventFilterBar } from './components/EventFilterBar.js';
 import './App.css';
 
 export function App() {
   const [url, setUrl] = useState('ws://localhost:3001');
-  const { connected, events, agents, tasks, tokenTotal, connect, disconnect } =
-    useWebSocket(url);
+  const {
+    connected, events, agents, tasks, tokenTotal,
+    chatMessages, chatTokenTotal, eventFilter,
+    connect, disconnect, setEventFilter,
+  } = useWebSocket(url);
+
+  const filteredEvents = eventFilter === 'all' ? events :
+    eventFilter === 'error' ? events.filter((e) => e.type.includes('error') || e.type.includes('fail')) :
+      events.filter((e) => e.type.startsWith(eventFilter));
 
   return (
     <div className="dashboard">
@@ -46,14 +55,22 @@ export function App() {
           <TaskFlowView tasks={tasks} />
         </section>
 
+        <section className="panel chat-panel">
+          <h2>Chat</h2>
+          <ChatEventPanel messages={chatMessages} tokenTotal={chatTokenTotal} />
+        </section>
+
         <section className="panel tokens-panel">
           <h2>Tokens</h2>
           <TokenUsageChart total={tokenTotal} tasks={tasks} />
         </section>
 
         <section className="panel events-panel">
-          <h2>Event Log</h2>
-          <EventLog events={events} />
+          <div className="events-header">
+            <h2>Event Log</h2>
+            <EventFilterBar filter={eventFilter} onFilterChange={setEventFilter} />
+          </div>
+          <EventLog events={filteredEvents} />
         </section>
       </div>
     </div>

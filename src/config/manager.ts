@@ -40,6 +40,10 @@ export interface XiaobaiConfig {
     deny: string[];
     allow: string[];
   };
+  plugins: {
+    enabled: boolean;
+    config?: Record<string, Record<string, unknown>>;
+  };
 }
 
 export interface ProviderConfig {
@@ -95,6 +99,9 @@ const DEFAULT_CONFIG: XiaobaiConfig = {
     deny: [],
     allow: [],
   },
+  plugins: {
+    enabled: true,
+  },
 };
 
 export class ConfigManager {
@@ -146,6 +153,7 @@ export class ConfigManager {
       sandbox: { ...base.sandbox, ...override.sandbox },
       context: { ...base.context, ...override.context },
       permissions: { ...base.permissions, ...override.permissions },
+      plugins: { ...base.plugins, ...override.plugins },
     };
   }
 

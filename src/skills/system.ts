@@ -1,5 +1,6 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, watchFile, unwatchFile } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, copyFileSync, watchFile, unwatchFile } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 export interface Skill {
   name: string;
@@ -15,6 +16,7 @@ export interface Skill {
     config?: Record<string, string>;
   };
   metadata?: Record<string, unknown>;
+  source?: 'builtin' | 'user' | 'installed';
 }
 
 export interface SkillExecutionContext {
@@ -26,6 +28,11 @@ export interface SkillExecutionContext {
 
 const SKILL_CATEGORIES = ['coding', 'analysis', 'writing', 'planning', 'review', 'devops', 'general'] as const;
 type SkillCategory = (typeof SKILL_CATEGORIES)[number];
+
+const BUILTIN_SKILLS = [
+  'code-review', 'test-gen', 'refactor', 'doc-writer',
+  'security-audit', 'debug', 'explain',
+] as const;
 
 export class SkillSystem {
   private skillsDir: string;
@@ -91,7 +98,11 @@ export class SkillSystem {
     if (!existsSync(skillPath)) return null;
 
     const content = readFileSync(skillPath, 'utf-8');
-    return this.parseSkillMd(content, dir);
+    const skill = this.parseSkillMd(content, dir);
+    if (skill.name !== 'unnamed' && this.isBuiltin(skill.name)) {
+      skill.source = 'builtin';
+    }
+    return skill;
   }
 
   private parseSkillMd(content: string, _dir?: string): Skill {
@@ -187,7 +198,9 @@ export class SkillSystem {
       const content = await response.text();
       const parsed = this.parseSkillMd(content);
       const skillName = name ?? parsed.name;
-      return this.create(skillName, parsed.description, (parsed.category as SkillCategory) ?? 'general', content);
+      const skill = await this.create(skillName, parsed.description, (parsed.category as SkillCategory) ?? 'general', content);
+      skill.source = 'installed';
+      return skill;
     } catch {
       return null;
     }
@@ -249,6 +262,33 @@ export class SkillSystem {
       categories[skill.category] = (categories[skill.category] ?? 0) + 1;
     }
     return { total: this.skills.size, categories };
+  }
+
+  static listBuiltinNames(): string[] {
+    return [...BUILTIN_SKILLS];
+  }
+
+  isBuiltin(name: string): boolean {
+    return (BUILTIN_SKILLS as readonly string[]).includes(name);
+  }
+
+  async installBuiltin(name?: string): Promise<string[]> {
+    const templatesDir = join(dirname(fileURLToPath(import.meta.url)), 'templates');
+    const toInstall = name ? [name] : [...BUILTIN_SKILLS];
+    const installed: string[] = [];
+
+    for (const skillName of toInstall) {
+      const srcDir = join(templatesDir, skillName);
+      if (!existsSync(srcDir)) continue;
+      const destDir = join(this.skillsDir, skillName);
+      if (existsSync(join(destDir, 'SKILL.md'))) continue;
+      mkdirSync(destDir, { recursive: true });
+      copyFileSync(join(srcDir, 'SKILL.md'), join(destDir, 'SKILL.md'));
+      installed.push(skillName);
+    }
+
+    if (installed.length > 0) await this.reload();
+    return installed;
   }
 
   private generateTemplate(name: string, description: string, category: string): string {

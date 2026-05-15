@@ -23,6 +23,17 @@ export interface LogEvent {
   message: string;
 }
 
+export interface ChatMessage {
+  id: string;
+  sessionId: string;
+  type: 'user' | 'assistant' | 'tool_call' | 'tool_result' | 'error';
+  content: string;
+  toolName?: string;
+  success?: boolean;
+  tokens?: number;
+  timestamp: number;
+}
+
 export interface OrchestratorWSMessage {
   type: string;
   [key: string]: unknown;
@@ -34,6 +45,9 @@ interface DashboardState {
   agents: AgentInfo[];
   tasks: TaskInfo[];
   tokenTotal: number;
+  chatMessages: ChatMessage[];
+  chatTokenTotal: number;
+  eventFilter: string;
 }
 
 export function useWebSocket(url: string) {
@@ -44,6 +58,9 @@ export function useWebSocket(url: string) {
     agents: [],
     tasks: [],
     tokenTotal: 0,
+    chatMessages: [],
+    chatTokenTotal: 0,
+    eventFilter: 'all',
   });
 
   const addEvent = useCallback((type: string, message: string) => {
@@ -51,6 +68,10 @@ export function useWebSocket(url: string) {
       ...prev,
       events: [...prev.events.slice(-199), { type, timestamp: Date.now(), message }],
     }));
+  }, []);
+
+  const setEventFilter = useCallback((filter: string) => {
+    setState((prev) => ({ ...prev, eventFilter: filter }));
   }, []);
 
   const handleMessage = useCallback(
@@ -130,6 +151,84 @@ export function useWebSocket(url: string) {
             agents: data.agents as AgentInfo[],
           }));
           break;
+
+        // Chat events
+        case 'chat_start':
+          setState((prev) => ({
+            ...prev,
+            chatMessages: [...prev.chatMessages.slice(-99), {
+              id: `start_${Date.now()}`,
+              sessionId: data.sessionId as string,
+              type: 'user' as const,
+              content: (data.prompt as string)?.slice(0, 200),
+              timestamp: data.timestamp as number,
+            }],
+          }));
+          addEvent('chat_start', `Chat started: ${(data.prompt as string)?.slice(0, 60)}`);
+          break;
+
+        case 'chat_turn':
+          setState((prev) => ({
+            ...prev,
+            chatMessages: [...prev.chatMessages.slice(-99), {
+              id: `turn_${Date.now()}_${prev.chatMessages.length}`,
+              sessionId: data.sessionId as string,
+              type: 'assistant' as const,
+              content: (data.content as string)?.slice(0, 500),
+              tokens: data.tokens as number,
+              timestamp: Date.now(),
+            }],
+            chatTokenTotal: prev.chatTokenTotal + (data.tokens as number ?? 0),
+          }));
+          break;
+
+        case 'chat_tool_call':
+          setState((prev) => ({
+            ...prev,
+            chatMessages: [...prev.chatMessages.slice(-99), {
+              id: `tc_${Date.now()}_${prev.chatMessages.length}`,
+              sessionId: data.sessionId as string,
+              type: 'tool_call' as const,
+              content: '',
+              toolName: data.toolName as string,
+              timestamp: Date.now(),
+            }],
+          }));
+          addEvent('chat_tool_call', `Tool: ${data.toolName}`);
+          break;
+
+        case 'chat_tool_result':
+          setState((prev) => ({
+            ...prev,
+            chatMessages: [...prev.chatMessages.slice(-99), {
+              id: `tr_${Date.now()}_${prev.chatMessages.length}`,
+              sessionId: data.sessionId as string,
+              type: 'tool_result' as const,
+              content: (data.output as string)?.slice(0, 200),
+              toolName: data.toolName as string,
+              success: data.success as boolean,
+              timestamp: Date.now(),
+            }],
+          }));
+          break;
+
+        case 'chat_stop':
+          addEvent('chat_stop', `Chat stopped: ${data.reason}`);
+          break;
+
+        case 'chat_error':
+          setState((prev) => ({
+            ...prev,
+            chatMessages: [...prev.chatMessages.slice(-99), {
+              id: `err_${Date.now()}`,
+              sessionId: data.sessionId as string,
+              type: 'error' as const,
+              content: data.error as string,
+              timestamp: Date.now(),
+            }],
+          }));
+          addEvent('chat_error', `Error: ${data.error}`);
+          break;
       }
     },
     [addEvent],
@@ -179,6 +278,7 @@ export function useWebSocket(url: string) {
     ...state,
     connect,
     disconnect,
+    setEventFilter,
   };
 }
 
