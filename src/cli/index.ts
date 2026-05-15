@@ -4,9 +4,10 @@ import { XiaobaiAgent } from '../core/agent.js';
 import { Orchestrator } from '../core/orchestrator.js';
 import { DashboardServer } from '../server/index.js';
 import { listRoles } from '../core/roles.js';
-import chalk from 'chalk';
 import { createInterface } from 'node:readline';
 import { exec } from 'node:child_process';
+import { Spinner, renderMarkdown, formatToolCall, formatTokenUsage, clearLine, printBanner, printHelp } from './renderer.js';
+import { PermissionPrompt } from './permissions.js';
 
 const program = new Command();
 
@@ -21,78 +22,160 @@ program
   .option('-m, --model <model>', 'Override default model')
   .option('-p, --profile <profile>', 'Use a specific profile')
   .option('--sandbox <mode>', 'Sandbox mode: read-only | workspace-write | full-access')
+  .option('--auto', 'Auto-approve all tool calls')
   .action(async (options: Record<string, string>) => {
-    console.log(chalk.cyan.bold('\n  Xiaobai Agent v0.1.0'));
-    console.log(chalk.gray('  Fusion of Hermes + OpenClaw + Claude Code + Codex\n'));
+    printBanner();
 
     try {
       const agent = await XiaobaiAgent.create();
+      const spinner = new Spinner();
+      const permPrompt = new PermissionPrompt(options.auto ? 'auto' : 'default');
+
       const rl = createInterface({
         input: process.stdin,
         output: process.stdout,
       });
+      permPrompt.setReadline(rl);
 
       let sessionId: string | undefined;
+      let totalTokens = 0;
+      let turnCount = 0;
 
       const prompt = () => {
-        rl.question(chalk.green('You: '), async (input) => {
+        rl.question(chalk.green('> '), async (input) => {
           const trimmed = input.trim();
-          if (!trimmed) {
-            prompt();
-            return;
-          }
+          if (!trimmed) { prompt(); return; }
 
           if (trimmed === '/exit' || trimmed === '/quit') {
-            console.log(chalk.gray('Goodbye!'));
+            console.log(chalk.gray(`\n  Turns: ${turnCount}, Tokens: ${formatTokenUsage(totalTokens)}`));
+            console.log(chalk.gray('  Goodbye!\n'));
             rl.close();
             process.exit(0);
           }
 
+          if (trimmed === '/help') { printHelp(); prompt(); return; }
+
           if (trimmed === '/memory') {
             const usage = agent.getMemory().getUsage();
-            console.log(chalk.yellow(`\nMemory: ${usage.memory.used}/${usage.memory.limit} chars`));
-            console.log(chalk.yellow(`User:   ${usage.user.used}/${usage.user.limit} chars`));
-            console.log(chalk.gray(`Entries: ${agent.getMemory().list('memory').length} memory, ${agent.getMemory().list('user').length} user\n`));
+            console.log(chalk.yellow(`\n  Memory: ${usage.memory.used}/${usage.memory.limit} chars`));
+            console.log(chalk.yellow(`  User:   ${usage.user.used}/${usage.user.limit} chars\n`));
             prompt();
             return;
           }
 
           if (trimmed === '/tools') {
             const tools = agent.getTools().list();
-            console.log(chalk.yellow(`\nAvailable tools (${tools.length}):`));
-            tools.forEach((t) => console.log(chalk.gray(`  - ${t}`)));
+            console.log(chalk.yellow(`\n  Tools (${tools.length}):`));
+            tools.forEach((t) => console.log(chalk.gray(`    - ${t}`)));
             console.log();
             prompt();
             return;
           }
 
-          if (trimmed === '/help') {
-            console.log(chalk.yellow('\nCommands:'));
-            console.log('  /exit, /quit  - Exit the session');
-            console.log('  /memory       - Show memory usage');
-            console.log('  /tools        - List available tools');
-            console.log('  /help         - Show this help\n');
+          if (trimmed === '/clear') {
+            sessionId = undefined;
+            totalTokens = 0;
+            turnCount = 0;
+            console.log(chalk.gray('  Session cleared.\n'));
             prompt();
             return;
           }
 
+          if (trimmed === '/compact') {
+            console.log(chalk.gray('  Compaction is automatic. Use /clear to reset.\n'));
+            prompt();
+            return;
+          }
+
+          if (trimmed === '/sessions') {
+            const sessions = (agent as any).deps.sessions.listSessions?.() ?? [];
+            if (sessions.length === 0) {
+              console.log(chalk.gray('  No saved sessions.\n'));
+            } else {
+              console.log(chalk.yellow(`\n  Sessions (${sessions.length}):`));
+              sessions.slice(0, 10).forEach((s: any) => {
+                const age = s.updatedAt ? new Date(s.updatedAt).toLocaleString() : 'unknown';
+                console.log(chalk.gray(`    ${s.id} (${s.messageCount} msgs, ${age})`));
+              });
+              console.log();
+            }
+            prompt();
+            return;
+          }
+
+          if (trimmed.startsWith('/model')) {
+            const parts = trimmed.split(' ');
+            if (parts.length > 1) {
+              console.log(chalk.gray(`  Model switching not yet implemented. Current: default\n`));
+            } else {
+              console.log(chalk.gray(`  Current model: default\n`));
+            }
+            prompt();
+            return;
+          }
+
+          // Normal chat
+          spinner.start('Thinking...');
+          turnCount++;
+
           try {
-            process.stdout.write(chalk.blue('Xiaobai: '));
-            for await (const event of agent.chat(trimmed, sessionId)) {
-              if (event.type === 'text') {
-                process.stdout.write(event.content);
-              } else if (event.type === 'tool_call') {
-                process.stdout.write(chalk.gray(`\n  [${event.toolName}] `));
-              } else if (event.type === 'tool_result') {
-                process.stdout.write(chalk.gray(` -> ${event.result?.success ? 'OK' : 'FAIL'}`));
-              } else if (event.type === 'stop') {
-                process.stdout.write('\n');
-              } else if (event.type === 'error') {
-                process.stdout.write(chalk.red(`\nError: ${event.content}\n`));
+            let currentTool = '';
+            let toolArgs: Record<string, unknown> = {};
+
+            for await (const event of agent.chat(trimmed, sessionId, {
+              stream: true,
+              permissionCallback: (tool, args) => permPrompt.checkPermission(tool, args),
+            })) {
+              switch (event.type) {
+                case 'text':
+                  spinner.stop();
+                  process.stdout.write(renderMarkdown(event.content));
+                  break;
+
+                case 'stream':
+                  spinner.stop();
+                  process.stdout.write(event.content);
+                  break;
+
+                case 'tool_call':
+                  currentTool = event.toolName ?? '';
+                  toolArgs = event.toolArgs ?? {};
+                  spinner.start(`Running ${currentTool}...`);
+                  break;
+
+                case 'tool_result':
+                  spinner.stop();
+                  console.log(formatToolCall({
+                    name: (currentTool || event.toolName) ?? 'unknown',
+                    args: toolArgs,
+                    result: event.result ? { success: event.result.success, output: event.result.output } : undefined,
+                  }));
+                  currentTool = '';
+                  break;
+
+                case 'compact':
+                  spinner.start('Compressing context...');
+                  break;
+
+                case 'stop':
+                  spinner.stop();
+                  if (event.tokens) totalTokens += event.tokens;
+                  console.log(); // newline after response
+                  break;
+
+                case 'error':
+                  spinner.stop();
+                  console.log(chalk.red(`  Error: ${event.content}`));
+                  break;
+              }
+
+              if (event.tokens) {
+                totalTokens += event.tokens;
               }
             }
           } catch (error) {
-            console.log(chalk.red(`\nError: ${(error as Error).message}`));
+            spinner.stop();
+            console.log(chalk.red(`\n  Error: ${(error as Error).message}`));
           }
 
           prompt();
@@ -110,11 +193,33 @@ program
   .command('exec <prompt>')
   .description('Execute a single prompt and exit')
   .option('-m, --model <model>', 'Override default model')
-  .action(async (prompt: string, _options: Record<string, string>) => {
+  .option('--stream', 'Stream output in real-time')
+  .action(async (prompt: string, options: Record<string, string>) => {
     try {
       const agent = await XiaobaiAgent.create();
-      const response = await agent.chatSync(prompt);
-      console.log(response);
+      const spinner = new Spinner();
+
+      if (options.stream) {
+        spinner.start('Thinking...');
+        for await (const event of agent.chat(prompt)) {
+          if (event.type === 'text' || event.type === 'stream') {
+            spinner.stop();
+            process.stdout.write(renderMarkdown(event.content));
+          } else if (event.type === 'tool_result') {
+            spinner.stop();
+            console.log(chalk.gray(`  [${event.toolName}] ${event.result?.success ? '✓' : '✗'}`));
+          } else if (event.type === 'stop') {
+            spinner.stop();
+            console.log();
+          } else if (event.type === 'error') {
+            spinner.stop();
+            console.log(chalk.red(`Error: ${event.content}`));
+          }
+        }
+      } else {
+        const response = await agent.chatSync(prompt);
+        console.log(renderMarkdown(response));
+      }
     } catch (error) {
       console.error(chalk.red('Error:'), (error as Error).message);
       process.exit(1);
@@ -159,11 +264,7 @@ program
   .action(async (options: { port: string; open: boolean }) => {
     const port = parseInt(options.port, 10);
 
-    const server = new DashboardServer({
-      port,
-      staticDir: undefined,
-    });
-
+    const server = new DashboardServer({ port, staticDir: undefined });
     await server.start();
 
     const httpUrl = server.getHttpUrl();
@@ -194,14 +295,13 @@ program
   .option('-c, --concurrency <n>', 'Max concurrent agents', '3')
   .action(async (prompt: string, options: { role: string; port: string; concurrency: string }) => {
     let server: DashboardServer | undefined;
+    const spinner = new Spinner();
 
     try {
       const agent = await XiaobaiAgent.create();
 
       if (options.port) {
-        server = new DashboardServer({
-          port: parseInt(options.port, 10),
-        });
+        server = new DashboardServer({ port: parseInt(options.port, 10) });
         await server.start();
         console.log(chalk.gray(`Dashboard: ${server.getHttpUrl()}`));
       }
@@ -216,25 +316,23 @@ program
         security: (agent as any).deps.security,
       });
 
-      if (server) {
-        server.attachOrchestrator(orch);
-      }
+      if (server) server.attachOrchestrator(orch);
 
-      orch.addTask({
-        description: prompt,
-        role: options.role,
-      });
+      orch.addTask({ description: prompt, role: options.role });
 
       const events: string[] = [];
       orch.onEvent((event) => {
         switch (event.type) {
           case 'task_started':
+            spinner.start(`Agent ${event.agentId}: ${event.task?.description?.slice(0, 50)}...`);
             events.push(`[${event.agentId}] Started: ${event.task?.description?.slice(0, 60)}`);
             break;
           case 'task_completed':
+            spinner.succeed(`${event.task?.description?.slice(0, 50)} (${event.result?.tokensUsed ?? 0} tokens)`);
             events.push(`[done] ${event.task?.description?.slice(0, 60)} (${event.result?.tokensUsed ?? 0} tokens)`);
             break;
           case 'task_failed':
+            spinner.fail(`${event.error}`);
             events.push(`[fail] ${event.error}`);
             break;
         }
@@ -243,25 +341,18 @@ program
       console.log(chalk.cyan(`\nRunning: "${prompt}"`));
       console.log(chalk.gray(`Role: ${options.role}, Concurrency: ${options.concurrency}\n`));
 
-      const results = await orch.execute({
-        maxConcurrency: parseInt(options.concurrency, 10),
-      });
-
-      for (const e of events) {
-        console.log(chalk.gray(`  ${e}`));
-      }
+      const results = await orch.execute({ maxConcurrency: parseInt(options.concurrency, 10) });
 
       console.log(chalk.cyan('\n--- Results ---'));
       for (const result of results) {
         const icon = result.success ? chalk.green('✓') : chalk.red('✗');
         console.log(`${icon} ${result.taskId}: ${result.output.slice(0, 200)}`);
-        if (result.error) {
-          console.log(chalk.red(`  Error: ${result.error}`));
-        }
+        if (result.error) console.log(chalk.red(`  Error: ${result.error}`));
       }
 
-      console.log(chalk.gray(`\nTotal tokens: ${results.reduce((sum, r) => sum + r.tokensUsed, 0)}`));
+      console.log(chalk.gray(`\nTotal tokens: ${formatTokenUsage(results.reduce((sum, r) => sum + r.tokensUsed, 0))}`));
     } catch (error) {
+      spinner.stop();
       console.error(chalk.red('Error:'), (error as Error).message);
       process.exit(1);
     } finally {
@@ -284,5 +375,7 @@ program
       console.log();
     }
   });
+
+import chalk from 'chalk';
 
 program.parse();
