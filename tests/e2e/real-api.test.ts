@@ -121,7 +121,7 @@ describe.skipIf(!hasApiKey)('Real API: AgentLoop with tools', () => {
     writeFileSync(filePath, 'The answer is 42.');
 
     const agent = await XiaobaiAgent.create();
-    const sessionId = (agent as any).deps.sessions.createSession();
+    const sessionId = agent.getDeps().sessions.createSession();
     const events: string[] = [];
 
     for await (const event of agent.chat(
@@ -140,7 +140,7 @@ describe.skipIf(!hasApiKey)('Real API: AgentLoop with tools', () => {
     const filePath = join(testDir, 'output.txt');
 
     const agent = await XiaobaiAgent.create();
-    const sessionId = (agent as any).deps.sessions.createSession();
+    const sessionId = agent.getDeps().sessions.createSession();
 
     let response = '';
     for await (const event of agent.chat(
@@ -160,7 +160,7 @@ describe.skipIf(!hasApiKey)('Real API: AgentLoop with tools', () => {
 
   it('runs bash command through tool call', async () => {
     const agent = await XiaobaiAgent.create();
-    const sessionId = (agent as any).deps.sessions.createSession();
+    const sessionId = agent.getDeps().sessions.createSession();
 
     let response = '';
     for await (const event of agent.chat(
