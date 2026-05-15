@@ -20,7 +20,7 @@ function createMockDeps(): AgentDeps {
   };
 
   const mockHooks = {
-    emit: vi.fn().mockResolvedValue(undefined),
+    emit: vi.fn().mockResolvedValue({ exitCode: 'allow' }),
   };
 
   const mockConfig = {

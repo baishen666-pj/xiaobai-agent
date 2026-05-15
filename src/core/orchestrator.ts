@@ -11,6 +11,7 @@ import {
 import { Workspace } from './workspace.js';
 import { AgentLoop, type LoopEvent } from './loop.js';
 import { ToolRegistry } from '../tools/registry.js';
+import type { AgentEvent, SessionSource } from './submissions.js';
 import { join } from 'node:path';
 
 export type OrchestratorEvent =
@@ -25,9 +26,14 @@ export type OrchestratorEvent =
 export interface OrchestratorOptions {
   maxConcurrency?: number;
   maxRetries?: number;
+  maxDepth?: number;
   abortSignal?: AbortSignal;
   onEvent?: (event: OrchestratorEvent) => void;
+  source?: SessionSource;
 }
+
+const DEFAULT_MAX_DEPTH = 1;
+const MAX_DEPTH_CAP = 3;
 
 interface AgentHandle {
   id: string;
@@ -35,7 +41,8 @@ interface AgentHandle {
   loop: AgentLoop;
   busy: boolean;
   currentTask?: Task;
-  promise?: Promise<void>;
+  depth: number;
+  cost: number;
 }
 
 let agentCounter = 0;
@@ -48,9 +55,13 @@ export class Orchestrator {
   private completedIds = new Set<string>();
   private results: TaskResult[] = [];
   private listeners: ((event: OrchestratorEvent) => void) = () => {};
+  private maxDepth: number;
+  private source: SessionSource;
 
   constructor(deps: AgentDeps, workspaceDir?: string) {
     this.deps = deps;
+    this.maxDepth = DEFAULT_MAX_DEPTH;
+    this.source = 'orchestrator';
     this.workspace = new Workspace(
       workspaceDir ?? join(process.cwd(), '.xiaobai', 'workspace'),
     );
@@ -100,6 +111,8 @@ export class Orchestrator {
 
   async execute(options: OrchestratorOptions = {}): Promise<TaskResult[]> {
     const { maxConcurrency = 3, abortSignal } = options;
+    this.maxDepth = Math.min(options.maxDepth ?? DEFAULT_MAX_DEPTH, MAX_DEPTH_CAP);
+    this.source = options.source ?? 'orchestrator';
 
     if (options.onEvent) this.onEvent(options.onEvent);
     await this.workspace.init();
@@ -134,7 +147,7 @@ export class Orchestrator {
       let launched = 0;
       while (runningCount + launched < maxConcurrency && readyTasks.length > 0) {
         const task = readyTasks.shift()!;
-        const handle = this.createAgentHandle(task.role);
+        const handle = this.createAgentHandle(task.role, 0);
         if (!handle) continue;
 
         task.status = 'assigned';
@@ -172,7 +185,7 @@ export class Orchestrator {
     const artifacts: TaskArtifact[] = [];
 
     try {
-      const sessionId = `orch_${task.id}`;
+      const sessionId = `orch_${this.source}_${task.id}`;
       const inputContext = this.buildTaskContext(task);
 
       for await (const event of handle.loop.run(
@@ -187,11 +200,14 @@ export class Orchestrator {
         },
       )) {
         if (event.type === 'text') output += event.content;
+        if (event.type === 'stream') output += event.content;
         if (event.tokens) tokensUsed += event.tokens;
       }
 
       task.status = 'completed';
       task.completedAt = Date.now();
+
+      handle.cost += tokensUsed;
 
       const result: TaskResult = {
         taskId: task.id,
@@ -236,9 +252,11 @@ export class Orchestrator {
     }
   }
 
-  private createAgentHandle(roleId: string): AgentHandle | null {
+  private createAgentHandle(roleId: string, depth: number): AgentHandle | null {
+    if (depth > this.maxDepth) return null;
+
     const role = getRole(roleId);
-    const id = `agent_${++agentCounter}_${roleId}`;
+    const id = `agent_${++agentCounter}_${roleId}_d${depth}`;
 
     const loop = new AgentLoop({
       provider: this.deps.provider,
@@ -248,9 +266,10 @@ export class Orchestrator {
       config: this.deps.config,
       memory: this.deps.memory,
       security: this.deps.security,
+      skills: this.deps.skills,
     });
 
-    const handle: AgentHandle = { id, role, loop, busy: false };
+    const handle: AgentHandle = { id, role, loop, busy: false, depth, cost: 0 };
     this.agents.set(id, handle);
     return handle;
   }
@@ -290,12 +309,17 @@ export class Orchestrator {
     return this.workspace;
   }
 
-  getAgentStatus(): Array<{ id: string; role: string; busy: boolean; currentTask?: string }> {
+  getAgentStatus(): Array<{ id: string; role: string; busy: boolean; currentTask?: string; cost: number }> {
     return Array.from(this.agents.values()).map((a) => ({
       id: a.id,
       role: a.role.id,
       busy: a.busy,
       currentTask: a.currentTask?.id,
+      cost: a.cost,
     }));
+  }
+
+  getTotalCost(): number {
+    return Array.from(this.agents.values()).reduce((sum, a) => sum + a.cost, 0);
   }
 }

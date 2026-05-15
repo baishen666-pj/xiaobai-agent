@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { execSync } from 'node:child_process';
+import type { HookExitCode } from '../core/submissions.js';
 
 export type HookEvent =
   | 'session_start'
@@ -13,24 +14,28 @@ export type HookEvent =
   | 'stop'
   | 'pre_compact'
   | 'post_compact'
-  | 'config_change';
+  | 'config_change'
+  | 'permission_request';
 
 export interface HookHandler {
   event: HookEvent;
-  type: 'command' | 'http' | 'prompt' | 'mcp_tool';
+  type: 'command' | 'http' | 'prompt';
   command?: string;
   url?: string;
   async?: boolean;
 }
 
 export interface HookResult {
-  blocked: boolean;
-  reason?: string;
+  exitCode: HookExitCode;
+  message?: string;
   modified?: Record<string, unknown>;
-  output?: string;
 }
 
-type HookListener = (data: Record<string, unknown>) => Promise<HookResult | void>;
+export const ALLOW: HookResult = { exitCode: 'allow' };
+export const WARN = (message: string): HookResult => ({ exitCode: 'warn', message });
+export const BLOCK = (message: string): HookResult => ({ exitCode: 'block', message });
+
+type HookListener = (data: Record<string, unknown>) => Promise<HookResult | void> | HookResult | void;
 
 export class HookSystem {
   private hooksDir: string;
@@ -54,9 +59,7 @@ export class HookSystem {
       for (const [event, handlers] of Object.entries(config)) {
         this.handlers.set(event, handlers);
       }
-    } catch {
-      // Invalid hooks file, skip
-    }
+    } catch {}
   }
 
   on(event: HookEvent, listener: HookListener): () => void {
@@ -69,21 +72,32 @@ export class HookSystem {
     };
   }
 
-  async emit(event: string, data: Record<string, unknown> = {}): Promise<HookResult | null> {
+  async emit(event: string, data: Record<string, unknown> = {}): Promise<HookResult> {
     const listeners = this.listeners.get(event) ?? [];
     const handlers = this.handlers.get(event) ?? [];
+    let worst: HookResult = ALLOW;
+
+    const updateWorst = (hr: HookResult) => {
+      if (hr.exitCode === 'block') return true;
+      if (hr.exitCode === 'warn' && worst.exitCode === 'allow') worst = hr;
+      return false;
+    };
 
     for (const listener of listeners) {
       const result = await listener(data);
-      if (result?.blocked) return result;
+      if (result && typeof result === 'object' && 'exitCode' in result) {
+        if (updateWorst(result as HookResult)) return result as HookResult;
+      }
     }
 
     for (const handler of handlers) {
       const result = await this.executeHandler(handler, data);
-      if (result?.blocked) return result;
+      if (result) {
+        if (updateWorst(result)) return result;
+      }
     }
 
-    return null;
+    return worst;
   }
 
   private async executeHandler(handler: HookHandler, data: Record<string, unknown>): Promise<HookResult | null> {
@@ -97,7 +111,7 @@ export class HookSystem {
     }
   }
 
-  private async executeCommandHook(command: string, data: Record<string, unknown>): Promise<HookResult> {
+  private executeCommandHook(command: string, data: Record<string, unknown>): HookResult {
     try {
       const envData = JSON.stringify(data);
       const result = execSync(command, {
@@ -106,12 +120,23 @@ export class HookSystem {
         input: envData,
         shell: '/bin/bash',
       });
+
       if (result.includes('__BLOCK__')) {
-        return { blocked: true, reason: result.replace('__BLOCK__', '').trim() };
+        return BLOCK(result.replace('__BLOCK__', '').trim());
       }
-      return { blocked: false, output: result };
+      if (result.includes('__WARN__')) {
+        return WARN(result.replace('__WARN__', '').trim());
+      }
+      return { exitCode: 'allow', message: result };
     } catch (error) {
-      return { blocked: false, output: `Hook error: ${(error as Error).message}` };
+      const exitCode = (error as any)?.status;
+      if (exitCode === 2) {
+        return BLOCK((error as any)?.stderr?.toString()?.trim() ?? 'Blocked by hook');
+      }
+      if (exitCode === 1) {
+        return WARN((error as any)?.stderr?.toString()?.trim() ?? 'Hook warning');
+      }
+      return { exitCode: 'allow', message: `Hook error: ${(error as Error).message}` };
     }
   }
 
@@ -122,13 +147,14 @@ export class HookSystem {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
       });
-      const result = await response.json() as { blocked?: boolean; reason?: string };
+      const result = await response.json() as { exitCode?: string; blocked?: boolean; reason?: string; message?: string };
+      const code = result.exitCode ?? (result.blocked ? 'block' : 'allow');
       return {
-        blocked: result.blocked ?? false,
-        reason: result.reason,
+        exitCode: code as HookExitCode,
+        message: result.reason ?? result.message,
       };
     } catch (error) {
-      return { blocked: false, output: `HTTP hook error: ${(error as Error).message}` };
+      return { exitCode: 'allow', message: `HTTP hook error: ${(error as Error).message}` };
     }
   }
 

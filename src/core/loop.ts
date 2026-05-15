@@ -1,22 +1,14 @@
 import type { ToolRegistry, ToolResult } from '../tools/registry.js';
 import type { ProviderRouter } from '../provider/router.js';
 import type { SessionManager, Message } from '../session/manager.js';
-import type { HookSystem } from '../hooks/system.js';
+import type { HookSystem, HookResult } from '../hooks/system.js';
 import type { ConfigManager } from '../config/manager.js';
 import type { MemorySystem } from '../memory/system.js';
 import type { SecurityManager } from '../security/manager.js';
 import type { SkillSystem } from '../skills/system.js';
+import type { Submission, AgentEvent, StopReason, TurnContext, SandboxPolicy } from './submissions.js';
 import { CompactionEngine } from './compaction.js';
-
-export type StopReason =
-  | 'completed'
-  | 'max_turns'
-  | 'aborted'
-  | 'prompt_too_long'
-  | 'model_error'
-  | 'hook_stopped'
-  | 'blocking_limit'
-  | 'diminishing_returns';
+import { loadHierarchicalContext, buildContextSystemPrompt } from './context.js';
 
 export interface LoopState {
   turn: number;
@@ -55,6 +47,10 @@ export class AgentLoop {
   private compaction: CompactionEngine;
   private skills?: SkillSystem;
 
+  private submissionQueue: Submission[] = [];
+  private eventBuffer: AgentEvent[] = [];
+  private running = false;
+
   constructor(deps: {
     provider: ProviderRouter;
     tools: ToolRegistry;
@@ -76,6 +72,24 @@ export class AgentLoop {
     this.compaction = new CompactionEngine(deps.provider);
   }
 
+  // ── Queue-Pair API ──
+
+  submit(submission: Submission): void {
+    this.submissionQueue.push(submission);
+  }
+
+  drainEvents(): AgentEvent[] {
+    const events = [...this.eventBuffer];
+    this.eventBuffer = [];
+    return events;
+  }
+
+  private emitEvent(event: AgentEvent): void {
+    this.eventBuffer.push(event);
+  }
+
+  // ── Legacy async generator API (backward compatible) ──
+
   async *run(
     userMessage: string,
     sessionId: string,
@@ -92,13 +106,29 @@ export class AgentLoop {
     };
 
     try {
+      await this.hooks.emit('session_start', { sessionId });
       state.messages = await this.sessions.loadMessages(sessionId);
       state.messages.push({ role: 'user', content: userMessage });
+
+      const hookResult = await this.hooks.emit('user_prompt_submit', { message: userMessage, sessionId });
+      if (hookResult.exitCode === 'block') {
+        state.stopReason = 'hook_blocked';
+        yield { type: 'error', content: hookResult.message ?? 'Blocked by hook' };
+        return;
+      }
 
       while (state.turn < maxTurns) {
         if (options.abortSignal?.aborted) {
           state.stopReason = 'aborted';
           yield { type: 'stop', content: 'Aborted by user' };
+          return;
+        }
+
+        // Check for pending submissions (interrupts, etc.)
+        const pending = this.submissionQueue.shift();
+        if (pending?.type === 'interrupt') {
+          state.stopReason = 'interrupted';
+          yield { type: 'stop', content: pending.reason ?? 'Interrupted' };
           return;
         }
 
@@ -116,8 +146,10 @@ export class AgentLoop {
         if (state.stopReason) break;
 
         if (this.shouldCompact(state)) {
+          await this.hooks.emit('pre_compact', { state, sessionId });
           yield { type: 'compact', content: 'Compressing context...' };
           await this.compactContext(state);
+          await this.hooks.emit('post_compact', { state, sessionId });
         }
 
         await this.hooks.emit('post_turn', { state, sessionId });
@@ -136,8 +168,11 @@ export class AgentLoop {
       if (cfg.memory.enabled) {
         await this.memory.flushIfDirty();
       }
+      await this.hooks.emit('stop', { reason: state.stopReason, tokens: state.totalTokens });
     }
   }
+
+  // ── Internal turn processing ──
 
   private async *processTurn(
     state: LoopState,
@@ -213,9 +248,7 @@ export class AgentLoop {
               state.messages.push({ role: 'assistant', content: fullContent });
             }
             state.totalTokens += totalTokens;
-            if (chunk.stopReason === 'tool_use') {
-              // Tool calls will follow in next turn
-            } else {
+            if (chunk.stopReason !== 'tool_use') {
               state.stopReason = 'completed';
               yield { type: 'stop', content: 'Task completed' };
             }
@@ -237,6 +270,15 @@ export class AgentLoop {
 
     const executeOne = async (call: ToolCall): Promise<{ call: ToolCall; result: ToolResult }> => {
       const args = call.arguments as Record<string, unknown>;
+
+      const hookResult = await this.hooks.emit('pre_tool_use', { tool: call.name, args });
+      if (hookResult.exitCode === 'block') {
+        return {
+          call,
+          result: { output: `Blocked by hook: ${hookResult.message}`, success: false },
+        };
+      }
+
       const allowed = options.permissionCallback
         ? await options.permissionCallback(call.name, args)
         : await this.security.checkPermission(call.name, args);
@@ -245,17 +287,6 @@ export class AgentLoop {
         return {
           call,
           result: { output: 'Permission denied', success: false, error: 'permission_denied' },
-        };
-      }
-
-      const hookResult = await this.hooks.emit('pre_tool_use', {
-        tool: call.name,
-        args,
-      });
-      if (hookResult?.blocked) {
-        return {
-          call,
-          result: { output: `Blocked by hook: ${hookResult.reason}`, success: false },
         };
       }
 
@@ -288,8 +319,8 @@ export class AgentLoop {
     const skillBlock = await this.loadSkillSummary();
     if (skillBlock) parts.push(skillBlock);
 
-    const instructions = await this.loadInstructions();
-    if (instructions) parts.push(instructions);
+    const contextBlock = this.loadProjectContext();
+    if (contextBlock) parts.push(contextBlock);
 
     return parts.join('\n\n');
   }
@@ -299,8 +330,13 @@ export class AgentLoop {
     return this.skills.buildSystemPrompt() || null;
   }
 
-  private async loadInstructions(): Promise<string | null> {
-    return null;
+  private loadProjectContext(): string | null {
+    try {
+      const context = loadHierarchicalContext(process.cwd());
+      return buildContextSystemPrompt(context);
+    } catch {
+      return null;
+    }
   }
 
   private shouldCompact(state: LoopState): boolean {
