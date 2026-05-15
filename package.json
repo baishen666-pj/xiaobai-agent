@@ -42,7 +42,7 @@
     "test:api": "vitest run tests/e2e/real-api.test.ts",
     "lint": "eslint src/",
     "typecheck": "tsc --noEmit",
-    "prepublishOnly": "npm run typecheck && npm test",
+    "prepublishOnly": "npm run build:dashboard && npm run typecheck && npm test",
     "prepack": "npm run build"
   },
   "keywords": [

@@ -1,10 +1,25 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { WebSocketServer } from 'ws';
 import { existsSync } from 'node:fs';
-import { readFile, stat } from 'node:fs/promises';
-import { join, extname } from 'node:path';
+import { readFile } from 'node:fs/promises';
+import { join, extname, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { EventBridge } from './eventBridge.js';
 import type { Orchestrator, OrchestratorEvent } from '../core/orchestrator.js';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
+function resolveStaticDir(explicit?: string): string {
+  if (explicit) return explicit;
+  const candidates = [
+    join(__dirname, '..', '..', 'public'),
+    join(process.cwd(), 'public'),
+  ];
+  for (const dir of candidates) {
+    if (existsSync(join(dir, 'index.html'))) return dir;
+  }
+  return candidates[0];
+}
 
 const MIME_TYPES: Record<string, string> = {
   '.html': 'text/html',
@@ -33,7 +48,7 @@ export class DashboardServer {
   constructor(options: DashboardServerOptions = {}) {
     this.port = options.port ?? 3001;
     this.host = options.host ?? '0.0.0.0';
-    this.staticDir = options.staticDir ?? join(process.cwd(), 'public');
+    this.staticDir = resolveStaticDir(options.staticDir);
     this.bridge = new EventBridge();
 
     this.httpServer = createServer((req, res) => {
@@ -101,6 +116,14 @@ export class DashboardServer {
   }
 
   async start(): Promise<void> {
+    const indexExists = existsSync(join(this.staticDir, 'index.html'));
+    if (!indexExists) {
+      console.warn(
+        `[dashboard] No built dashboard found at ${this.staticDir}\n` +
+        `[dashboard] Run "npm run build:dashboard" first, or use --static-dir to specify a path.`,
+      );
+    }
+
     return new Promise((resolve) => {
       this.httpServer.listen(this.port, this.host, () => {
         const addr = this.httpServer.address();

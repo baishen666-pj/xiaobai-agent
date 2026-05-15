@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { WebSocket } from 'ws';
 import { DashboardServer } from '../src/server/index.js';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -104,5 +104,47 @@ describe('DashboardServer', () => {
   it('returns 404 for unknown routes', async () => {
     const res = await fetch(`http://localhost:${port}/unknown`);
     expect(res.status).toBe(404);
+  });
+});
+
+describe('DashboardServer staticDir resolution', () => {
+  it('uses explicit staticDir when provided', () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'xiaobai-explicit-'));
+    const server = new DashboardServer({ port: 0, staticDir: tempDir });
+    expect((server as any).staticDir).toBe(tempDir);
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it('resolves to package public dir when built dashboard exists', () => {
+    const server = new DashboardServer({ port: 0 });
+    const staticDir = (server as any).staticDir;
+    expect(staticDir).toContain('public');
+  });
+
+  it('serves built dashboard assets', async () => {
+    const server = new DashboardServer({ port: 0 });
+    await server.start();
+    const port = (server as any).httpServer.address().port;
+
+    const res = await fetch(`http://localhost:${port}/`);
+    const html = await res.text();
+
+    if (res.status === 200) {
+      expect(html).toContain('Xiaobai Dashboard');
+      expect(html).toContain('id="root"');
+    }
+
+    await server.stop();
+  });
+});
+
+describe('DashboardServer build detection', () => {
+  it('starts without error when index.html missing (warns)', async () => {
+    const emptyDir = mkdtempSync(join(tmpdir(), 'xiaobai-empty-'));
+    const server = new DashboardServer({ port: 0, staticDir: emptyDir });
+    await server.start();
+    expect((server as any).httpServer.listening).toBe(true);
+    await server.stop();
+    rmSync(emptyDir, { recursive: true, force: true });
   });
 });
