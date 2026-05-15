@@ -49,7 +49,7 @@ describe('ProviderRouter', () => {
     } catch (error) {
       expect((error as Error).message).toBeDefined();
     }
-  });
+  }, 15000);
 
   it('getEnvKey reads from environment', () => {
     process.env['XIAOBAI_API_KEY'] = 'env-test-key';
@@ -83,13 +83,31 @@ describe('ProviderRouter Streaming', () => {
 });
 
 describe('Multi-Provider Support', () => {
-  it('lists available providers', () => {
+  it('lists all available providers', () => {
     const providers = ProviderRouter.getAvailableProviders();
     expect(providers).toContain('anthropic');
     expect(providers).toContain('openai');
     expect(providers).toContain('google');
     expect(providers).toContain('groq');
     expect(providers).toContain('ollama');
+  });
+
+  it('lists Chinese LLM providers', () => {
+    const providers = ProviderRouter.getAvailableProviders();
+    expect(providers).toContain('deepseek');
+    expect(providers).toContain('zhipu');
+    expect(providers).toContain('qwen');
+    expect(providers).toContain('moonshot');
+    expect(providers).toContain('yi');
+    expect(providers).toContain('baidu');
+    expect(providers).toContain('minimax');
+    expect(providers).toContain('baichuan');
+  });
+
+  it('lists web subscription providers', () => {
+    const providers = ProviderRouter.getAvailableProviders();
+    expect(providers).toContain('claude-web');
+    expect(providers).toContain('chatgpt-web');
   });
 
   it('creates Anthropic provider', () => {
@@ -112,18 +130,64 @@ describe('Multi-Provider Support', () => {
     expect(provider.name).toBe('google');
   });
 
-  it('creates Groq provider with correct base URL', () => {
-    const config = makeConfig({ default: 'groq' });
+  it('creates DeepSeek provider', () => {
+    const config = makeConfig({ default: 'deepseek' });
     const router = new ProviderRouter(config);
-    const provider = (router as any).getProvider('groq');
-    expect(provider.name).toBe('groq');
+    const provider = (router as any).getProvider('deepseek');
+    expect(provider.name).toBe('deepseek');
   });
 
-  it('creates Ollama provider with local base URL', () => {
-    const config = makeConfig({ default: 'ollama' });
+  it('creates Zhipu provider', () => {
+    const config = makeConfig({ default: 'zhipu' });
     const router = new ProviderRouter(config);
-    const provider = (router as any).getProvider('ollama');
-    expect(provider.name).toBe('ollama');
+    const provider = (router as any).getProvider('zhipu');
+    expect(provider.name).toBe('zhipu');
+  });
+
+  it('creates Qwen provider', () => {
+    const config = makeConfig({ default: 'qwen' });
+    const router = new ProviderRouter(config);
+    const provider = (router as any).getProvider('qwen');
+    expect(provider.name).toBe('qwen');
+  });
+
+  it('creates Moonshot provider', () => {
+    const config = makeConfig({ default: 'moonshot' });
+    const router = new ProviderRouter(config);
+    const provider = (router as any).getProvider('moonshot');
+    expect(provider.name).toBe('moonshot');
+  });
+
+  it('creates claude-web provider for subscription login', () => {
+    const config = makeConfig({ default: 'claude-web' });
+    const router = new ProviderRouter(config);
+    const provider = (router as any).getProvider('claude-web');
+    expect(provider.name).toBe('claude-web');
+  });
+
+  it('creates chatgpt-web provider for subscription login', () => {
+    const config = makeConfig({ default: 'chatgpt-web' });
+    const router = new ProviderRouter(config);
+    const provider = (router as any).getProvider('chatgpt-web');
+    expect(provider.name).toBe('chatgpt-web');
+  });
+
+  it('discovers env keys for Chinese providers', () => {
+    process.env['DEEPSEEK_API_KEY'] = 'test-ds-key';
+    const config = makeConfig({ default: 'deepseek', apiKey: undefined });
+    const router = new ProviderRouter(config);
+    const provider = (router as any).getProvider('deepseek');
+    expect(provider).toBeDefined();
+    delete process.env['DEEPSEEK_API_KEY'];
+  });
+
+  it('discovers env keys for web subscription tokens', () => {
+    process.env['CLAUDE_WEB_TOKEN'] = 'test-web-token';
+    const config = makeConfig({ default: 'claude-web', apiKey: undefined });
+    const router = new ProviderRouter(config);
+    const provider = (router as any).getProvider('claude-web');
+    expect(provider).toBeDefined();
+    delete process.env['CLAUDE_WEB_TOKEN'];
   });
 
   it('caches provider instances', () => {

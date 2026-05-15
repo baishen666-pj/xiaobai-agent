@@ -12,11 +12,28 @@ const MAX_RETRIES = 3;
 const RETRY_BASE_MS = 1000;
 
 const PROVIDER_FACTORIES: Record<string, (config: ProviderConfig) => LLMProvider> = {
+  // Western providers
   anthropic: (c) => new AnthropicProvider(c),
   openai: (c) => new OpenAICompatibleProvider({ ...c, name: 'openai' }),
   google: (c) => new GoogleProvider(c),
   groq: (c) => new OpenAICompatibleProvider({ ...c, name: 'groq', baseUrl: c.baseUrl ?? 'https://api.groq.com/openai/v1' }),
   ollama: (c) => new OpenAICompatibleProvider({ ...c, name: 'ollama', baseUrl: c.baseUrl ?? 'http://localhost:11434/v1', apiKey: c.apiKey ?? 'ollama' }),
+
+  // Chinese LLM providers
+  deepseek: (c) => new OpenAICompatibleProvider({ ...c, name: 'deepseek', baseUrl: c.baseUrl ?? 'https://api.deepseek.com/v1' }),
+  zhipu: (c) => new OpenAICompatibleProvider({ ...c, name: 'zhipu', baseUrl: c.baseUrl ?? 'https://open.bigmodel.cn/api/paas/v4' }),
+  qwen: (c) => new OpenAICompatibleProvider({ ...c, name: 'qwen', baseUrl: c.baseUrl ?? 'https://dashscope.aliyuncs.com/compatible-mode/v1' }),
+  moonshot: (c) => new OpenAICompatibleProvider({ ...c, name: 'moonshot', baseUrl: c.baseUrl ?? 'https://api.moonshot.cn/v1' }),
+  yi: (c) => new OpenAICompatibleProvider({ ...c, name: 'yi', baseUrl: c.baseUrl ?? 'https://api.lingyiwanwu.com/v1' }),
+  baidu: (c) => new OpenAICompatibleProvider({ ...c, name: 'baidu', baseUrl: c.baseUrl ?? 'https://qianfan.baidubce.com/v2' }),
+  minimax: (c) => new OpenAICompatibleProvider({ ...c, name: 'minimax', baseUrl: c.baseUrl ?? 'https://api.minimax.chat/v1' }),
+  baichuan: (c) => new OpenAICompatibleProvider({ ...c, name: 'baichuan', baseUrl: c.baseUrl ?? 'https://api.baichuan-ai.com/v1' }),
+
+  // Web subscription (session token) providers
+  'claude-web': (c) => new AnthropicProvider({ ...c, name: 'claude-web' }),
+  'chatgpt-web': (c) => new OpenAICompatibleProvider({ ...c, name: 'chatgpt-web', baseUrl: c.baseUrl ?? 'https://api.openai.com/v1' }),
+
+  // Generic fallback
   openaiCompatible: (c) => new OpenAICompatibleProvider(c),
 };
 
@@ -136,6 +153,16 @@ export class ProviderRouter {
       google: ['GOOGLE_API_KEY', 'GEMINI_API_KEY'],
       groq: ['GROQ_API_KEY'],
       ollama: [],
+      deepseek: ['DEEPSEEK_API_KEY'],
+      zhipu: ['ZHIPU_API_KEY'],
+      qwen: ['QWEN_API_KEY', 'DASHSCOPE_API_KEY'],
+      moonshot: ['MOONSHOT_API_KEY'],
+      yi: ['YI_API_KEY'],
+      baidu: ['BAIDU_API_KEY'],
+      minimax: ['MINIMAX_API_KEY'],
+      baichuan: ['BAICHUAN_API_KEY'],
+      'claude-web': ['CLAUDE_WEB_TOKEN', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY'],
+      'chatgpt-web': ['CHATGPT_WEB_TOKEN', 'OPENAI_SESSION_TOKEN', 'OPENAI_API_KEY'],
     };
     const keys = envMap[provider] ?? [];
     for (const key of keys) {

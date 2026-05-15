@@ -2,18 +2,24 @@ import type { Message } from '../session/manager.js';
 import type { ProviderConfig, ProviderResponse, StreamChunk, ChatOptions, LLMProvider } from './types.js';
 
 export class AnthropicProvider implements LLMProvider {
-  readonly name = 'anthropic';
+  readonly name: string;
   private apiKey: string;
+  private baseUrl: string | undefined;
   private client: InstanceType<typeof import('@anthropic-ai/sdk')['default']> | null = null;
 
   constructor(config: ProviderConfig) {
+    this.name = config.name;
     this.apiKey = config.apiKey ?? '';
+    this.baseUrl = config.baseUrl;
   }
 
   private async getClient() {
     if (this.client) return this.client;
     const { default: Anthropic } = await import('@anthropic-ai/sdk');
-    this.client = new Anthropic({ apiKey: this.apiKey });
+    this.client = new Anthropic({
+      apiKey: this.apiKey,
+      baseURL: this.baseUrl,
+    });
     return this.client;
   }
 
