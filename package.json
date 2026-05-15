@@ -1,7 +1,7 @@
 {
   "name": "xiaobai-agent",
   "version": "0.1.0",
-  "description": "A fusion AI agent combining the best of Hermes, OpenClaw, Claude Code, and Codex — multi-agent orchestration, streaming LLM, MCP integration, and real-time dashboard",
+  "description": "Fusion AI agent — multi-agent orchestration, 18+ LLM providers, streaming CLI, MCP integration, real-time dashboard, skill system, plugin marketplace",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -51,17 +51,25 @@
     "llm",
     "anthropic",
     "openai",
+    "deepseek",
+    "qwen",
     "mcp",
     "cli",
     "multi-agent",
     "orchestration",
-    "coding-assistant"
+    "coding-assistant",
+    "streaming",
+    "dashboard"
   ],
-  "author": "",
+  "author": "baishen666",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": ""
+    "url": "https://github.com/baishen666/xiaobai-agent"
+  },
+  "homepage": "https://github.com/baishen666/xiaobai-agent#readme",
+  "bugs": {
+    "url": "https://github.com/baishen666/xiaobai-agent/issues"
   },
   "engines": {
     "node": ">=18.0.0"
