@@ -557,9 +557,27 @@ const globTool: Tool = {
 
     try {
       const files: string[] = [];
-      for await (const entry of asyncGlob(pattern, { cwd: absSearchPath })) {
-        files.push(join(absSearchPath, entry));
-        if (files.length >= 250) break;
+      try {
+        for await (const entry of asyncGlob(pattern, { cwd: absSearchPath })) {
+          files.push(join(absSearchPath, entry));
+          if (files.length >= 250) break;
+        }
+      } catch {
+        // Fallback: recursive readdir when glob is unavailable (Node <22)
+        const { readdir: readdirAsync } = await import('node:fs/promises');
+        const prefix = pattern.replace(/\*\*\/?/g, '').replace(/\*/g, '');
+        const queue = [absSearchPath];
+        while (queue.length > 0 && files.length < 250) {
+          const dir = queue.shift()!;
+          try {
+            for (const entry of await readdirAsync(dir, { withFileTypes: true })) {
+              const full = join(dir, entry.name);
+              if (entry.isDirectory()) { queue.push(full); continue; }
+              if (prefix && !entry.name.endsWith(prefix)) continue;
+              files.push(full);
+            }
+          } catch { continue; }
+        }
       }
 
       return {
