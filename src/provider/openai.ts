@@ -106,6 +106,18 @@ export class OpenAICompatibleProvider implements LLMProvider {
     for (const m of messages) {
       if (m.role === 'system') { formatted.push({ role: 'system', content: m.content }); continue; }
       if (m.role === 'tool_result') { formatted.push({ role: 'tool', content: m.content, tool_call_id: m.toolCallId ?? '' }); continue; }
+      if (m.role === 'assistant' && m.toolCalls?.length) {
+        formatted.push({
+          role: 'assistant',
+          content: m.content || null,
+          tool_calls: m.toolCalls.map(tc => ({
+            id: tc.id,
+            type: 'function',
+            function: { name: tc.name, arguments: JSON.stringify(tc.arguments) },
+          })),
+        });
+        continue;
+      }
       formatted.push({ role: m.role, content: m.content });
     }
     return formatted;

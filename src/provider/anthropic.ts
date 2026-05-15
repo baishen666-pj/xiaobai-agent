@@ -116,6 +116,17 @@ export class AnthropicProvider implements LLMProvider {
         }
         continue;
       }
+      if (m.role === 'assistant' && m.toolCalls?.length) {
+        const content: Array<any> = [];
+        if (m.content) {
+          content.push({ type: 'text', text: m.content });
+        }
+        for (const tc of m.toolCalls) {
+          content.push({ type: 'tool_use', id: tc.id, name: tc.name, input: tc.arguments });
+        }
+        formatted.push({ role: 'assistant', content });
+        continue;
+      }
       formatted.push({ role: m.role as 'user' | 'assistant', content: m.content });
     }
     return formatted as any;

@@ -195,14 +195,36 @@ export class AgentLoop {
     state.totalTokens += response.usage?.totalTokens ?? 0;
 
     if (response.content) {
-      state.messages.push({ role: 'assistant', content: response.content });
       yield { type: 'text', content: response.content, tokens: response.usage?.totalTokens };
+    }
 
-      if (!response.toolCalls?.length) {
-        state.stopReason = 'completed';
-        yield { type: 'stop', content: 'Task completed' };
-        return;
+    if (response.toolCalls?.length) {
+      state.messages.push({
+        role: 'assistant',
+        content: response.content ?? '',
+        toolCalls: response.toolCalls,
+      });
+
+      const results = await this.executeToolCalls(response.toolCalls, options);
+      for (const { call, result } of results) {
+        yield {
+          type: 'tool_result',
+          content: result.output,
+          toolName: call.name,
+          result,
+        };
+        state.messages.push({
+          role: 'tool_result',
+          toolCallId: call.id,
+          content: result.output,
+        });
       }
+    } else {
+      if (response.content) {
+        state.messages.push({ role: 'assistant', content: response.content });
+      }
+      state.stopReason = 'completed';
+      yield { type: 'stop', content: 'Task completed' };
     }
 
     if (response.toolCalls?.length) {
@@ -230,6 +252,7 @@ export class AgentLoop {
   ): AsyncGenerator<LoopEvent, void, void> {
     let fullContent = '';
     let totalTokens = 0;
+    const toolCallStates = new Map<number, { id: string; name: string; args: string }>();
 
     try {
       for await (const chunk of this.provider.chatStream(state.messages, {
@@ -242,15 +265,70 @@ export class AgentLoop {
             fullContent += chunk.text ?? '';
             yield { type: 'stream', content: chunk.text ?? '' };
             break;
+          case 'tool_call_start':
+            if (chunk.toolCallId && chunk.toolCallName) {
+              const idx = toolCallStates.size;
+              toolCallStates.set(idx, { id: chunk.toolCallId, name: chunk.toolCallName, args: '' });
+            }
+            yield { type: 'tool_call', content: '', toolName: chunk.toolCallName, toolArgs: {} };
+            break;
+          case 'tool_call_delta':
+            // Append delta args to the last tool call
+            if (chunk.toolCallDelta) {
+              for (const [, tc] of toolCallStates) {
+                if (tc.id === chunk.toolCallId) {
+                  tc.args += chunk.toolCallDelta;
+                  break;
+                }
+              }
+            }
+            break;
           case 'usage':
             totalTokens += chunk.usage?.totalTokens ?? 0;
             break;
           case 'done':
-            if (fullContent) {
-              state.messages.push({ role: 'assistant', content: fullContent });
-            }
             state.totalTokens += totalTokens;
-            if (chunk.stopReason !== 'tool_use') {
+
+            // Collect completed tool calls from the stream's state
+            const toolCalls: ToolCall[] = [];
+            for (const [, tc] of toolCallStates) {
+              toolCalls.push({
+                id: tc.id,
+                name: tc.name,
+                arguments: JSON.parse(tc.args || '{}'),
+              });
+            }
+
+            if (toolCalls.length > 0 || chunk.stopReason === 'tool_calls' || chunk.stopReason === 'tool_use') {
+              // Need to collect tool calls from stream — they were emitted but not captured
+              // The provider's chatStream emits tool_call_start/delta chunks with the data
+              // We need to reconstruct from the StreamChunk types
+              state.messages.push({
+                role: 'assistant',
+                content: fullContent || '',
+                toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+              });
+
+              if (toolCalls.length > 0) {
+                const results = await this.executeToolCalls(toolCalls, options);
+                for (const { call, result } of results) {
+                  yield {
+                    type: 'tool_result',
+                    content: result.output,
+                    toolName: call.name,
+                    result,
+                  };
+                  state.messages.push({
+                    role: 'tool_result',
+                    toolCallId: call.id,
+                    content: result.output,
+                  });
+                }
+              }
+            } else {
+              if (fullContent) {
+                state.messages.push({ role: 'assistant', content: fullContent });
+              }
               state.stopReason = 'completed';
               yield { type: 'stop', content: 'Task completed' };
             }

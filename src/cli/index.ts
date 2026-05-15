@@ -240,7 +240,7 @@ program
 
       if (options.stream) {
         spinner.start('Thinking...');
-        for await (const event of agent.chat(prompt)) {
+        for await (const event of agent.chat(prompt, undefined, { stream: true })) {
           chatListener?.(event);
           if (event.type === 'text' || event.type === 'stream') {
             spinner.stop();

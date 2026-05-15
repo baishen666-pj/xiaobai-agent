@@ -6,6 +6,11 @@ export interface Message {
   role: 'user' | 'assistant' | 'system' | 'tool_result';
   content: string;
   toolCallId?: string;
+  toolCalls?: Array<{
+    id: string;
+    name: string;
+    arguments: Record<string, unknown>;
+  }>;
   timestamp?: number;
 }
 
