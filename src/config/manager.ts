@@ -28,6 +28,10 @@ export interface XiaobaiConfig {
   };
   sandbox: {
     mode: 'read-only' | 'workspace-write' | 'full-access';
+    network?: 'allow-all' | 'deny-all' | 'allow-list';
+    allowedDomains?: string[];
+    blockedCommands?: string[];
+    maxExecutionTimeMs?: number;
   };
   hooks: Record<string, HookConfig[]>;
   context: {
@@ -124,32 +128,92 @@ export class ConfigManager {
   }
 
   private load(): XiaobaiConfig {
+    let config = { ...DEFAULT_CONFIG };
+
+    // 1. Load from config.yaml if exists
     const configPath = join(this.configDir, 'config.yaml');
     if (existsSync(configPath)) {
       const raw = readFileSync(configPath, 'utf-8');
       const userConfig = parseYaml(raw) as Partial<XiaobaiConfig>;
-      return this.mergeConfig(DEFAULT_CONFIG, userConfig);
+      config = this.mergeConfig(config, userConfig);
     }
 
+    // 2. Environment variables always override file config
     const envConfig = this.loadFromEnv();
     if (Object.keys(envConfig).length > 0) {
-      return this.mergeConfig(DEFAULT_CONFIG, envConfig);
+      config = this.mergeConfig(config, envConfig);
     }
 
-    return { ...DEFAULT_CONFIG };
+    return config;
   }
 
   private loadFromEnv(): Partial<XiaobaiConfig> {
     const config: Partial<XiaobaiConfig> = {};
-    const apiKey = process.env['XIAOBAI_API_KEY'] ?? process.env['ANTHROPIC_API_KEY'] ?? process.env['OPENAI_API_KEY'];
-    if (apiKey) {
-      config.provider = { default: 'anthropic', apiKey };
+
+    // Read XIAOBAI_PROVIDER to override default provider
+    const providerName = process.env['XIAOBAI_PROVIDER'];
+    if (providerName) {
+      const apiKey = this.findApiKeyForProvider(providerName);
+      config.provider = { default: providerName, ...(apiKey ? { apiKey } : {}) };
+      // Set sensible model defaults for non-Anthropic providers
+      if (!process.env['XIAOBAI_MODEL']) {
+        const modelDefault = this.getDefaultModelForProvider(providerName);
+        if (modelDefault) {
+          config.model = { default: modelDefault, fallback: modelDefault, compact: modelDefault };
+        }
+      }
+    } else {
+      const apiKey = process.env['XIAOBAI_API_KEY'] ?? process.env['ANTHROPIC_API_KEY'] ?? process.env['OPENAI_API_KEY'];
+      if (apiKey) {
+        config.provider = { default: 'anthropic', apiKey };
+      }
     }
+
     const model = process.env['XIAOBAI_MODEL'];
     if (model) {
       config.model = { ...config.model, default: model } as XiaobaiConfig['model'];
     }
     return config;
+  }
+
+  private findApiKeyForProvider(provider: string): string | undefined {
+    const envMap: Record<string, string[]> = {
+      anthropic: ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'],
+      openai: ['OPENAI_API_KEY'],
+      google: ['GOOGLE_API_KEY', 'GEMINI_API_KEY'],
+      groq: ['GROQ_API_KEY'],
+      deepseek: ['DEEPSEEK_API_KEY'],
+      zhipu: ['ZHIPU_API_KEY'],
+      qwen: ['QWEN_API_KEY', 'DASHSCOPE_API_KEY'],
+      moonshot: ['MOONSHOT_API_KEY'],
+      yi: ['YI_API_KEY'],
+      baidu: ['BAIDU_API_KEY'],
+      minimax: ['MINIMAX_API_KEY'],
+      baichuan: ['BAICHU_API_KEY'],
+    };
+    const keys = envMap[provider] ?? [];
+    for (const key of keys) {
+      if (process.env[key]) return process.env[key];
+    }
+    return process.env['XIAOBAI_API_KEY'];
+  }
+
+  private getDefaultModelForProvider(provider: string): string | undefined {
+    const modelMap: Record<string, string> = {
+      deepseek: 'deepseek-chat',
+      zhipu: 'glm-4-flash',
+      qwen: 'qwen-turbo',
+      moonshot: 'moonshot-v1-8k',
+      yi: 'yi-lightning',
+      baidu: 'ernie-4.0-8k',
+      minimax: 'MiniMax-Text-01',
+      baichuan: 'Baichuan4',
+      openai: 'gpt-4o-mini',
+      google: 'gemini-2.0-flash',
+      groq: 'llama-3.3-70b-versatile',
+      ollama: 'llama3',
+    };
+    return modelMap[provider];
   }
 
   private mergeConfig(base: XiaobaiConfig, override: Partial<XiaobaiConfig>): XiaobaiConfig {

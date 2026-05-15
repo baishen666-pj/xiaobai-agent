@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import 'dotenv/config';
 import { Command } from 'commander';
 import { XiaobaiAgent } from '../core/agent.js';
 import { Orchestrator } from '../core/orchestrator.js';

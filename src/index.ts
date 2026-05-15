@@ -1,5 +1,6 @@
 export { XiaobaiAgent } from './core/agent.js';
-export { AgentLoop, type LoopEvent, type LoopState, type StopReason } from './core/loop.js';
+export { AgentLoop, type LoopEvent, type LoopState } from './core/loop.js';
+export type { StopReason } from './core/submissions.js';
 export { ToolRegistry, type Tool, type ToolResult, type ToolContext } from './tools/registry.js';
 export { SessionManager, type Session, type Message } from './session/manager.js';
 export { MemorySystem } from './memory/system.js';

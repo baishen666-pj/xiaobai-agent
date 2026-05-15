@@ -10,6 +10,8 @@ import type { Submission, AgentEvent, StopReason, TurnContext, SandboxPolicy } f
 import { CompactionEngine } from './compaction.js';
 import { loadHierarchicalContext, buildContextSystemPrompt } from './context.js';
 
+export type { StopReason } from './submissions.js';
+
 export interface LoopState {
   turn: number;
   messages: Message[];
