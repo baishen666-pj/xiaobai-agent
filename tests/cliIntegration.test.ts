@@ -9,8 +9,9 @@ import { tmpdir } from 'node:os';
 describe('CLI agents command', () => {
   it('lists available agent roles', () => {
     const output = execSync('npx tsx src/cli/index.ts agents', {
-      cwd: 'E:/CCCC/xiaobai',
+      cwd: import.meta.dirname ? undefined : process.cwd(),
       encoding: 'utf-8',
+      shell: process.platform === 'win32' ? 'cmd.exe' : '/bin/bash',
     });
 
     expect(output).toContain('coordinator');
@@ -25,8 +26,9 @@ describe('CLI agents command', () => {
 describe('CLI help', () => {
   it('shows help with all commands', () => {
     const output = execSync('npx tsx src/cli/index.ts --help', {
-      cwd: 'E:/CCCC/xiaobai',
+      cwd: import.meta.dirname ? undefined : process.cwd(),
       encoding: 'utf-8',
+      shell: process.platform === 'win32' ? 'cmd.exe' : '/bin/bash',
     });
 
     expect(output).toContain('chat');
