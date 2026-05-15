@@ -63,7 +63,7 @@ export class ACPAdapter {
     }
 
     if (req.method !== 'POST') {
-      this.sendError(res, -32600, 'Only POST supported', 400);
+      this.sendError(res, 0, -32600, 'Only POST supported', 400);
       return;
     }
 
@@ -71,7 +71,7 @@ export class ACPAdapter {
     const request = body as ACPRequest;
 
     if (request.jsonrpc !== '2.0') {
-      this.sendError(res, -32600, 'Invalid JSON-RPC version');
+      this.sendError(res, request?.id ?? 0, -32600, 'Invalid JSON-RPC version');
       return;
     }
 
@@ -79,7 +79,7 @@ export class ACPAdapter {
       const result = await this.route(request);
       this.sendResult(res, request.id, result);
     } catch (err) {
-      this.sendError(res, -32603, (err as Error).message);
+      this.sendError(res, request?.id ?? 0, -32603, (err as Error).message);
     }
   }
 
@@ -110,7 +110,7 @@ export class ACPAdapter {
     const model = this.agent.getCurrentModel();
     return {
       name: 'xiaobai-agent',
-      version: '0.2.0',
+      version: '0.3.0',
       capabilities: {
         streaming: true,
         tools: this.agent.getTools().getToolDefinitions().map((t) => t.name),
@@ -128,7 +128,7 @@ export class ACPAdapter {
       const result = await this.agent.chatSync(params.prompt);
       return { output: result, success: true };
     } catch (err) {
-      return { output: '', success: false };
+      return { output: (err as Error).message, success: false };
     } finally {
       this.activeTasks.delete(taskId);
     }
@@ -162,8 +162,8 @@ export class ACPAdapter {
     res.end(JSON.stringify(response));
   }
 
-  private sendError(res: ServerResponse, code: number, message: string, httpStatus = 200): void {
-    const response: ACPResponse = { jsonrpc: '2.0', id: 0, error: { code, message } };
+  private sendError(res: ServerResponse, id: string | number, code: number, message: string, httpStatus = 200): void {
+    const response: ACPResponse = { jsonrpc: '2.0', id, error: { code, message } };
     res.writeHead(httpStatus, {
       'Content-Type': 'application/json',
       'Access-Control-Allow-Origin': '*',

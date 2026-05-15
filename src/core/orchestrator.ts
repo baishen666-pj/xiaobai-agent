@@ -56,7 +56,7 @@ export class Orchestrator {
   private agents = new Map<string, AgentHandle>();
   private completedIds = new Set<string>();
   private results: TaskResult[] = [];
-  private listeners: ((event: OrchestratorEvent) => void) = () => {};
+  private listeners: Array<(event: OrchestratorEvent) => void> = [];
   private maxDepth: number;
   private taskTimeoutMs: number;
   private source: SessionSource;
@@ -72,13 +72,17 @@ export class Orchestrator {
   }
 
   onEvent(listener: (event: OrchestratorEvent) => void): () => void {
-    const prev = this.listeners;
-    this.listeners = (event) => { prev(event); listener(event); };
-    return () => { this.listeners = prev; };
+    this.listeners.push(listener);
+    return () => {
+      const idx = this.listeners.indexOf(listener);
+      if (idx >= 0) this.listeners.splice(idx, 1);
+    };
   }
 
   private emit(event: OrchestratorEvent): void {
-    this.listeners(event);
+    for (const listener of this.listeners) {
+      listener(event);
+    }
   }
 
   addTask(params: {
@@ -159,7 +163,9 @@ export class Orchestrator {
         task.assignedAgentId = handle.id;
         task.startedAt = Date.now();
 
-        const p = this.runTask(handle, task, options).catch(() => {});
+        const p = this.runTask(handle, task, options).catch((err) => {
+          console.error(`[orchestrator] Task ${task.id} failed:`, err);
+        });
         inflight.push(p);
         launched++;
       }
@@ -193,8 +199,9 @@ export class Orchestrator {
       const sessionId = `orch_${this.source}_${task.id}`;
       const inputContext = this.buildTaskContext(task);
 
+      let timeoutId: ReturnType<typeof setTimeout> | undefined;
       const timeoutPromise = new Promise<void>((_, reject) => {
-        setTimeout(() => reject(new Error(`Task timed out after ${this.taskTimeoutMs}ms`)), this.taskTimeoutMs);
+        timeoutId = setTimeout(() => reject(new Error(`Task timed out after ${this.taskTimeoutMs}ms`)), this.taskTimeoutMs);
       });
 
       const runPromise = (async () => {
@@ -216,6 +223,7 @@ export class Orchestrator {
       })();
 
       await Promise.race([runPromise, timeoutPromise]);
+      if (timeoutId !== undefined) clearTimeout(timeoutId);
 
       task.status = 'completed';
       task.completedAt = Date.now();

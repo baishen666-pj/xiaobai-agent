@@ -40,7 +40,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
       toolCalls: choice?.message?.tool_calls?.map((tc) => ({
         id: tc.id,
         name: tc.function.name,
-        arguments: JSON.parse(tc.function.arguments),
+        arguments: (() => { try { return JSON.parse(tc.function.arguments); } catch { return {}; } })(),
       })),
       usage: response.usage
         ? { promptTokens: response.usage.prompt_tokens, completionTokens: response.usage.completion_tokens, totalTokens: response.usage.total_tokens }
@@ -86,8 +86,10 @@ export class OpenAICompatibleProvider implements LLMProvider {
           }
           if (tc.function?.arguments) {
             const state = toolCallStates.get(idx);
-            if (state) state.args += tc.function.arguments;
-            yield { type: 'tool_call_delta', toolCallId: state?.id ?? '', toolCallDelta: tc.function.arguments };
+            if (state) {
+              state.args += tc.function.arguments;
+              yield { type: 'tool_call_delta', toolCallId: state.id, toolCallDelta: tc.function.arguments };
+            }
           }
         }
       }

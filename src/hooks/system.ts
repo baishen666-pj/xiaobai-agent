@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { execSync } from 'node:child_process';
+import { exec as execAsync } from 'node:child_process';
 import type { HookExitCode } from '../core/submissions.js';
 
 export type HookEvent =
@@ -59,7 +59,9 @@ export class HookSystem {
       for (const [event, handlers] of Object.entries(config)) {
         this.handlers.set(event, handlers);
       }
-    } catch {}
+    } catch (err) {
+      console.warn(`[hooks] Failed to load hooks.json: ${(err as Error).message}`);
+    }
   }
 
   on(event: HookEvent, listener: HookListener): () => void {
@@ -111,14 +113,19 @@ export class HookSystem {
     }
   }
 
-  private executeCommandHook(command: string, data: Record<string, unknown>): HookResult {
+  private async executeCommandHook(command: string, data: Record<string, unknown>): Promise<HookResult> {
     try {
       const envData = JSON.stringify(data);
-      const result = execSync(command, {
-        encoding: 'utf-8',
-        timeout: 30000,
-        input: envData,
-        shell: process.platform === 'win32' ? 'cmd.exe' : '/bin/bash',
+      const result = await new Promise<string>((resolve, reject) => {
+        const child = execAsync(command, {
+          encoding: 'utf-8',
+          timeout: 30000,
+          shell: process.platform === 'win32' ? 'cmd.exe' : '/bin/bash',
+        }, (error, stdout) => {
+          if (error) reject(error);
+          else resolve(stdout);
+        });
+        child.stdin?.end(envData);
       });
 
       if (result.includes('__BLOCK__')) {

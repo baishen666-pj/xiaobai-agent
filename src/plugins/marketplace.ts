@@ -1,5 +1,5 @@
-import { execSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { execSync, execFileSync } from 'node:child_process';
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 export interface MarketplacePlugin {
@@ -64,12 +64,15 @@ export class PluginMarketplace {
   async installFromGitHub(repo: string, targetDir: string): Promise<{ success: boolean; error?: string }> {
     const [owner, repoName] = repo.replace(/^github:/, '').split('/');
     if (!owner || !repoName) return { success: false, error: 'Invalid format. Use: github:owner/repo' };
+    if (!/^[a-zA-Z0-9._-]+$/.test(owner) || !/^[a-zA-Z0-9._-]+$/.test(repoName)) {
+      return { success: false, error: 'Invalid owner or repo name characters' };
+    }
 
     const dest = join(targetDir, repoName);
     if (existsSync(dest)) return { success: false, error: `Plugin already exists: ${repoName}` };
 
     try {
-      execSync(`git clone --depth 1 https://github.com/${owner}/${repoName}.git "${dest}"`, {
+      execFileSync('git', ['clone', '--depth', '1', `https://github.com/${owner}/${repoName}.git`, dest], {
         stdio: 'pipe',
         timeout: 60_000,
       });
@@ -90,15 +93,18 @@ export class PluginMarketplace {
 
   async installFromNpm(packageName: string, targetDir: string): Promise<{ success: boolean; error?: string }> {
     const name = packageName.replace(/^npm:/, '');
+    if (!/^[a-zA-Z0-9@._\/-]+$/.test(name)) {
+      return { success: false, error: 'Invalid package name characters' };
+    }
     const dest = join(targetDir, name.replace(/[\/@]/g, '_'));
 
     try {
       mkdirSync(dest, { recursive: true });
-      execSync(`npm pack ${name} --pack-destination "${dest}"`, { stdio: 'pipe', timeout: 60_000 });
+      execFileSync('npm', ['pack', name, '--pack-destination', dest], { stdio: 'pipe', timeout: 60_000 });
 
-      const tarballs = execSync(`ls "${dest}"/*.tgz`, { encoding: 'utf-8' }).trim().split('\n');
-      if (tarballs.length > 0 && tarballs[0]) {
-        execSync(`tar -xzf "${tarballs[0]}" -C "${dest}"`, { stdio: 'pipe' });
+      const files = readdirSync(dest).filter((f) => f.endsWith('.tgz'));
+      if (files.length > 0) {
+        execFileSync('tar', ['-xzf', join(dest, files[0]), '-C', dest], { stdio: 'pipe' });
       }
 
       this.addToLocalIndex({

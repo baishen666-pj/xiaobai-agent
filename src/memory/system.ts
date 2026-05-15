@@ -30,19 +30,19 @@ export class MemorySystem {
   }
 
   private load(): void {
-    this.stateEntries = this.loadFile('STATE.md');
-    this.longTermEntries = this.loadFile('MEMORY.md');
+    this.stateEntries = this.loadFile('STATE.md', 'state');
+    this.longTermEntries = this.loadFile('MEMORY.md', 'long-term');
     this.sessionEntries = [];
   }
 
-  private loadFile(filename: string): MemoryEntry[] {
+  private loadFile(filename: string, scope: MemoryScope): MemoryEntry[] {
     const path = join(this.memoryDir, filename);
     if (!existsSync(path)) return [];
     const content = readFileSync(path, 'utf-8');
     return content
       .split('\n')
       .filter((line) => line.trim().length > 0)
-      .map((line) => ({ content: line, addedAt: Date.now(), scope: 'state' as MemoryScope }));
+      .map((line) => ({ content: line, addedAt: Date.now(), scope }));
   }
 
   private saveFile(filename: string, entries: MemoryEntry[]): void {
@@ -85,7 +85,7 @@ export class MemorySystem {
   add(scopeOrTarget: MemoryScope | 'memory' | 'user', content: string): { success: boolean; error?: string } {
     const scope = this.resolveScope(scopeOrTarget);
     const entries = this.getEntries(scope);
-    const limit = this.memoryCharLimit;
+    const limit = scope === 'state' ? this.userCharLimit : this.memoryCharLimit;
     const currentChars = entries.reduce((sum, e) => sum + e.content.length, 0);
 
     if (currentChars + content.length > limit) {

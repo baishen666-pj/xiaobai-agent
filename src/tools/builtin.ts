@@ -1,7 +1,7 @@
 // NOTE: Tools defined here can be migrated to individual files under src/tools/
 // that call registry.registerSelf() for auto-registration. See registry.ts for details.
 // The getBuiltinTools() function remains the canonical entry point for now.
-import { spawn, execSync, type ChildProcess } from 'node:child_process';
+import { spawn, execSync, execFileSync, type ChildProcess } from 'node:child_process';
 import {
   readFileSync,
   writeFileSync,
@@ -27,10 +27,8 @@ function truncate(output: string, max = MAX_OUTPUT): string {
 function isPathSafe(filePath: string, allowedDirs?: string[]): boolean {
   const normalized = normalize(resolve(filePath));
   if (!isAbsolute(normalized)) return false;
-  const traversalPattern = /\.\./;
-  if (traversalPattern.test(relative(resolve(filePath), normalized))) return false;
   if (allowedDirs?.length) {
-    return allowedDirs.some((dir) => normalized.startsWith(normalize(resolve(dir))));
+    return allowedDirs.some((dir) => normalized.startsWith(normalize(resolve(dir)) + sep) || normalized === normalize(resolve(dir)));
   }
   return true;
 }
@@ -358,7 +356,7 @@ function runRipgrep(
   args.push('--regexp', pattern, searchPath);
 
   try {
-    const result = execSync(`rg ${args.map((a) => `"${a}"`).join(' ')}`, {
+    const result = execFileSync('rg', args, {
       maxBuffer: 10 * 1024 * 1024,
       encoding: 'utf-8',
       timeout: 30000,
@@ -429,7 +427,7 @@ const grepTool: Tool = {
       }
 
       const regex = new RegExp(pattern, 'i');
-      const results = await nativeGrep(absSearchPath, regex, globPattern, output_mode, max_results);
+      const results = await nativeGrep(absSearchPath, pattern, regex.flags.includes('i'), globPattern, output_mode, max_results);
       return { output: results || 'No matches found', success: true };
     } catch (error) {
       const errMsg = (error as Error).message;
@@ -450,14 +448,15 @@ const grepTool: Tool = {
 
 async function nativeGrep(
   searchPath: string,
-  regex: RegExp,
+  patternSource: string,
+  caseInsensitive: boolean,
   globFilter?: string,
   mode: string = 'files',
   maxResults: number = 500,
 ): Promise<string> {
   const statResult = await stat(searchPath);
   if (statResult.isFile()) {
-    return grepFile(searchPath, regex, mode);
+    return grepFile(searchPath, patternSource, caseInsensitive, mode);
   }
 
   const globPattern = globFilter ? `**/${globFilter}` : '**/*';
@@ -486,15 +485,15 @@ async function nativeGrep(
 
       const lines = content.split('\n');
       let fileCount = 0;
+      const fileRegex = new RegExp(patternSource, caseInsensitive ? 'i' : '');
 
       for (let i = 0; i < lines.length; i++) {
-        if (regex.test(lines[i])) {
+        if (fileRegex.test(lines[i])) {
           fileCount++;
           if (mode === 'content' && totalResults < maxResults) {
             contentLines.push(`${full}:${i + 1}:${lines[i]}`);
             totalResults++;
           }
-          regex.lastIndex = 0;
         }
       }
 
@@ -516,17 +515,17 @@ async function nativeGrep(
   return contentLines.join('\n');
 }
 
-async function grepFile(filePath: string, regex: RegExp, mode: string): Promise<string> {
+async function grepFile(filePath: string, patternSource: string, caseInsensitive: boolean, mode: string): Promise<string> {
   const content = await readFile(filePath, 'utf-8');
   const lines = content.split('\n');
   const results: string[] = [];
+  const fileRegex = new RegExp(patternSource, caseInsensitive ? 'i' : '');
 
   for (let i = 0; i < lines.length; i++) {
-    if (regex.test(lines[i])) {
+    if (fileRegex.test(lines[i])) {
       if (mode === 'content') results.push(`${filePath}:${i + 1}:${lines[i]}`);
       else if (mode === 'files') return filePath;
       else results.push(`${i + 1}`);
-      regex.lastIndex = 0;
     }
   }
 

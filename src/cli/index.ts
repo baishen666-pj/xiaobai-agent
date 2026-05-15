@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import 'dotenv/config';
+import chalk from 'chalk';
 import { Command } from 'commander';
 import { XiaobaiAgent } from '../core/agent.js';
 import { Orchestrator } from '../core/orchestrator.js';
@@ -7,7 +8,7 @@ import { DashboardServer } from '../server/index.js';
 import { SkillSystem } from '../skills/system.js';
 import { listRoles } from '../core/roles.js';
 import { createInterface } from 'node:readline';
-import { exec } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { Spinner, renderMarkdown, formatToolCall, formatTokenUsage, clearLine, printBanner, printHelp } from './renderer.js';
 import { StreamingMarkdownRenderer } from './streaming-renderer.js';
 import { PermissionPrompt } from './permissions.js';
@@ -17,7 +18,7 @@ const program = new Command();
 program
   .name('xiaobai')
   .description('Xiaobai - A fusion AI agent combining the best of Hermes, OpenClaw, Claude Code, and Codex')
-  .version('0.1.0');
+  .version('0.3.0');
 
 program
   .command('chat')
@@ -42,7 +43,7 @@ program
       });
       permPrompt.setReadline(rl);
 
-      let sessionId: string | undefined;
+      let sessionId: string | undefined = agent.getDeps().sessions.createSession();
       let totalTokens = 0;
       let turnCount = 0;
 
@@ -197,9 +198,6 @@ program
                   break;
               }
 
-              if (event.tokens) {
-                totalTokens += event.tokens;
-              }
             }
           } catch (error) {
             spinner.stop();
@@ -319,7 +317,7 @@ program
 
     if (options.open) {
       const cmd = process.platform === 'win32' ? 'start' : process.platform === 'darwin' ? 'open' : 'xdg-open';
-      exec(`${cmd} ${httpUrl}`);
+      execFile(cmd, [httpUrl]);
     }
 
     process.on('SIGINT', async () => {
@@ -542,8 +540,6 @@ program
         console.log(chalk.gray('\n  Install with: xiaobai skills install-builtin [name]\n'));
       }),
   );
-
-import chalk from 'chalk';
 
 program
   .command('plugins')

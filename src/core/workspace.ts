@@ -1,5 +1,5 @@
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, resolve, normalize } from 'node:path';
 
 export interface WorkspaceEntry {
   key: string;
@@ -13,6 +13,8 @@ export interface WorkspaceFile {
   content: string;
   createdBy: string;
 }
+
+const IS_WIN = process.platform === 'win32';
 
 export class Workspace {
   private store = new Map<string, WorkspaceEntry>();
@@ -56,12 +58,21 @@ export class Workspace {
     return this.entries().filter((e) => e.key.startsWith(prefix));
   }
 
+  private validatePath(relativePath: string): string {
+    const fullPath = normalize(resolve(this.baseDir, relativePath));
+    const normalizedBase = normalize(resolve(this.baseDir));
+    if (!fullPath.startsWith(normalizedBase + (IS_WIN ? '\\' : '/')) && fullPath !== normalizedBase) {
+      throw new Error(`Path traversal detected: ${relativePath}`);
+    }
+    return fullPath;
+  }
+
   async writeFile(
     relativePath: string,
     content: string,
     agentId: string,
   ): Promise<string> {
-    const fullPath = join(this.baseDir, relativePath);
+    const fullPath = this.validatePath(relativePath);
     const dir = join(fullPath, '..');
     await mkdir(dir, { recursive: true });
     await writeFile(fullPath, content, 'utf-8');
@@ -80,7 +91,7 @@ export class Workspace {
     if (cached) return cached.content;
 
     try {
-      const fullPath = join(this.baseDir, relativePath);
+      const fullPath = this.validatePath(relativePath);
       return await readFile(fullPath, 'utf-8');
     } catch {
       return null;

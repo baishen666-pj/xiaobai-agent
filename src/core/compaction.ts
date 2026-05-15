@@ -79,6 +79,11 @@ export class CompactionEngine {
     for (const msg of messages) {
       totalChars += msg.content.length;
       if (msg.toolCallId) totalChars += msg.toolCallId.length;
+      if (msg.toolCalls) {
+        for (const tc of msg.toolCalls) {
+          totalChars += (tc.name?.length ?? 0) + JSON.stringify(tc.arguments).length;
+        }
+      }
     }
     return Math.ceil(totalChars / CHARS_PER_TOKEN);
   }

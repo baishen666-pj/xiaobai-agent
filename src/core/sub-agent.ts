@@ -62,7 +62,6 @@ export class SubAgentEngine {
 
   private children = new Map<string, ActiveChild>();
   private maxDepth: number;
-  private currentDepth = 0;
   private heartbeatTimer?: ReturnType<typeof setInterval>;
 
   private agentDefinitions = new Map<string, SubAgentDefinition>();
@@ -101,7 +100,7 @@ export class SubAgentEngine {
       onEvent?: (event: LoopEvent) => void;
     },
   ): Promise<SubAgentResult> {
-    const depth = options?.depth ?? this.currentDepth + 1;
+    const depth = options?.depth ?? 1;
     if (depth > this.maxDepth) {
       return { output: `Cannot spawn: max depth (${this.maxDepth}) reached`, success: false, tokensUsed: 0, toolCalls: 0, error: 'max_depth_exceeded' };
     }
@@ -139,9 +138,6 @@ export class SubAgentEngine {
     };
 
     this.children.set(childId, child);
-
-    const prevDepth = this.currentDepth;
-    this.currentDepth = depth;
 
     try {
       let output = '';
@@ -181,7 +177,6 @@ export class SubAgentEngine {
         error: (error as Error).message,
       };
     } finally {
-      this.currentDepth = prevDepth;
       if (child.lease) this.credentialPool.release(child.lease.leaseId);
       this.children.delete(childId);
     }
@@ -260,11 +255,17 @@ export class SubAgentEngine {
       try {
         const files = readdirSync(dir).filter((f) => f.endsWith('.md'));
         for (const file of files) {
-          const content = readFileSync(join(dir, file), 'utf-8');
-          const def = this.parseAgentDefinition(content);
-          if (def) this.agentDefinitions.set(def.name, def);
+          try {
+            const content = readFileSync(join(dir, file), 'utf-8');
+            const def = this.parseAgentDefinition(content);
+            if (def) this.agentDefinitions.set(def.name, def);
+          } catch {
+            // Skip malformed agent definition files
+          }
         }
-      } catch {}
+      } catch {
+        // Skip unreadable directories
+      }
     }
   }
 
@@ -284,13 +285,18 @@ export class SubAgentEngine {
 
     if (!meta.name) return null;
 
+    let allowedTools: string[] | undefined;
+    let blockedTools: string[] | undefined;
+    try { allowedTools = meta.allowedTools ? JSON.parse(meta.allowedTools) : undefined; } catch {}
+    try { blockedTools = meta.blockedTools ? JSON.parse(meta.blockedTools) : undefined; } catch {}
+
     return {
       name: meta.name,
       model: meta.model || undefined,
       maxTurns: meta.maxTurns ? parseInt(meta.maxTurns, 10) : undefined,
       maxDepth: meta.maxDepth ? parseInt(meta.maxDepth, 10) : undefined,
-      allowedTools: meta.allowedTools ? JSON.parse(meta.allowedTools) : undefined,
-      blockedTools: meta.blockedTools ? JSON.parse(meta.blockedTools) : undefined,
+      allowedTools,
+      blockedTools,
       systemPrompt: body.trim(),
     };
   }

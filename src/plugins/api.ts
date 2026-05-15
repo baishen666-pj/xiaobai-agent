@@ -139,10 +139,9 @@ export class PluginAPIImpl implements PluginAPI {
     get: (): Record<string, unknown> => {
       try {
         this.checkPermission('config:read');
-        const cfg = this._configManager.get() as unknown as Record<string, Record<string, unknown>>;
-        const plugins = cfg.plugins;
-        const scoped = plugins && typeof plugins === 'object' ? plugins[this.pluginName] : undefined;
-        return scoped as Record<string, unknown> | undefined ?? Object.create(null);
+        const cfg = this._configManager.get() as any;
+        const pluginConfig = cfg.plugins?.config ?? {};
+        return pluginConfig[this.pluginName] ?? {};
       } catch {
         return {};
       }
@@ -151,10 +150,10 @@ export class PluginAPIImpl implements PluginAPI {
     set: (values: Record<string, unknown>): void => {
       try {
         this.checkPermission('config:write');
-        const cfg = this._configManager.get() as unknown as Record<string, Record<string, Record<string, unknown>>>;
-        const plugins = cfg.plugins ?? {};
-        plugins[this.pluginName] = { ...(plugins[this.pluginName] ?? {}), ...values };
-        this._configManager.save({ plugins } as any);
+        const cfg = this._configManager.get() as any;
+        const pluginConfig = cfg.plugins?.config ?? {};
+        pluginConfig[this.pluginName] = { ...(pluginConfig[this.pluginName] ?? {}), ...values };
+        this._configManager.save({ plugins: { ...cfg.plugins, config: pluginConfig } } as any);
       } catch (err) {
         this._onError({
           pluginName: this.pluginName,

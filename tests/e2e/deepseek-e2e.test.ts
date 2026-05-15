@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { XiaobaiAgent } from '../../src/core/agent.js';
 import { ProviderRouter } from '../../src/provider/router.js';
@@ -258,4 +259,195 @@ describe('E2E: SubAgentEngine depth control', () => {
     engine.destroy();
     rmSync(tempDir, { recursive: true, force: true });
   });
+});
+
+describe.skipIf(!hasApiKey)('E2E: SubAgentEngine real spawn', () => {
+  let tempDir: string;
+  let engine: SubAgentEngine;
+  let tools: ToolRegistry;
+  let config: ConfigManager;
+
+  beforeAll(() => {
+    tempDir = join(tmpdir(), `xiaobai-sub-real-${Date.now()}`);
+    mkdirSync(tempDir, { recursive: true });
+    config = new ConfigManager();
+  });
+
+  afterAll(() => {
+    if (engine) engine.destroy();
+    if (existsSync(tempDir)) rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it('spawns a sub-agent that completes a simple task', async () => {
+    const { SessionManager } = await import('../../src/session/manager.js');
+    const { HookSystem } = await import('../../src/hooks/system.js');
+    const { MemorySystem } = await import('../../src/memory/system.js');
+    const { SecurityManager } = await import('../../src/security/manager.js');
+
+    tools = new ToolRegistry();
+    tools.register({
+      definition: { name: 'read', description: 'Read a file', parameters: { type: 'object', properties: { file_path: { type: 'string' } }, required: ['file_path'] } },
+      execute: async () => ({ output: 'file contents here', success: true }),
+    });
+    tools.register({
+      definition: { name: 'grep', description: 'Search files', parameters: { type: 'object', properties: { pattern: { type: 'string' } }, required: ['pattern'] } },
+      execute: async () => ({ output: 'match found', success: true }),
+    });
+
+    engine = new SubAgentEngine({
+      provider: new ProviderRouter(config.get()),
+      sessions: new SessionManager(tempDir),
+      hooks: new HookSystem(tempDir),
+      config,
+      memory: new MemorySystem(tempDir),
+      security: new SecurityManager(config.get()),
+    });
+    engine.setMaxDepth(1);
+
+    const result = await engine.spawn(
+      'Reply with exactly one word: DONE. Do not use any tools.',
+      tools,
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.output.toUpperCase()).toContain('DONE');
+    expect(result.tokensUsed).toBeGreaterThan(0);
+  }, 30000);
+
+  it('sub-agent can use read tool via real LLM call', async () => {
+    const { SessionManager } = await import('../../src/session/manager.js');
+    const { HookSystem } = await import('../../src/hooks/system.js');
+    const { MemorySystem } = await import('../../src/memory/system.js');
+    const { SecurityManager } = await import('../../src/security/manager.js');
+
+    const testFile = join(tempDir, 'sub-agent-read.txt');
+    writeFileSync(testFile, 'The answer is SUBAGENT_42');
+
+    const realTools = new ToolRegistry();
+    realTools.register({
+      definition: { name: 'read', description: 'Read a file', parameters: { type: 'object', properties: { file_path: { type: 'string' } }, required: ['file_path'] } },
+      execute: async (args) => {
+        const { readFileSync } = await import('node:fs');
+        try {
+          return { output: readFileSync(args.file_path as string, 'utf-8'), success: true };
+        } catch (e) {
+          return { output: (e as Error).message, success: false };
+        }
+      },
+    });
+
+    const subEngine = new SubAgentEngine({
+      provider: new ProviderRouter(config.get()),
+      sessions: new SessionManager(tempDir),
+      hooks: new HookSystem(tempDir),
+      config,
+      memory: new MemorySystem(tempDir),
+      security: new SecurityManager(config.get()),
+    });
+
+    const result = await subEngine.spawn(
+      `Read the file at ${testFile} and tell me the number after "SUBAGENT_". Reply with only the number.`,
+      realTools,
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.output).toContain('42');
+    expect(result.toolCalls).toBeGreaterThan(0);
+    subEngine.destroy();
+  }, 45000);
+
+  it('sub-agent respects blocked tools (agent tool blocked)', async () => {
+    const { SessionManager } = await import('../../src/session/manager.js');
+    const { HookSystem } = await import('../../src/hooks/system.js');
+    const { MemorySystem } = await import('../../src/memory/system.js');
+    const { SecurityManager } = await import('../../src/security/manager.js');
+
+    const allTools = new ToolRegistry();
+    allTools.register({
+      definition: { name: 'read', description: 'Read', parameters: { type: 'object', properties: {} } },
+      execute: async () => ({ output: 'ok', success: true }),
+    });
+    allTools.register({
+      definition: { name: 'agent', description: 'Spawn sub-agent', parameters: { type: 'object', properties: {} } },
+      execute: async () => ({ output: 'should not be called', success: true }),
+    });
+
+    const subEngine = new SubAgentEngine({
+      provider: new ProviderRouter(config.get()),
+      sessions: new SessionManager(tempDir),
+      hooks: new HookSystem(tempDir),
+      config,
+      memory: new MemorySystem(tempDir),
+      security: new SecurityManager(config.get()),
+    });
+
+    const result = await subEngine.spawn(
+      'Reply with exactly: BLOCKED_OK',
+      allTools,
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.output.toUpperCase()).toContain('BLOCKED');
+    subEngine.destroy();
+  }, 30000);
+});
+
+describe.skipIf(!hasApiKey)('E2E: Multi-turn session with real API', () => {
+  let agent: XiaobaiAgent;
+  let testDir: string;
+
+  beforeAll(async () => {
+    testDir = join(tmpdir(), `xiaobai-multi-${Date.now()}`);
+    mkdirSync(testDir, { recursive: true });
+    agent = await XiaobaiAgent.create();
+  });
+
+  afterAll(async () => {
+    await agent.destroy();
+    if (existsSync(testDir)) rmSync(testDir, { recursive: true, force: true });
+  });
+
+  it('maintains context across multiple turns in same session', async () => {
+    const sessionId = agent.getDeps().sessions.createSession();
+
+    // Turn 1: Tell it something
+    let r1 = '';
+    for await (const event of agent.chat(
+      'Remember this secret code: XR7-ALPHA. Just reply OK.',
+      sessionId,
+    )) {
+      if (event.type === 'text') r1 += event.content;
+    }
+    expect(r1.length).toBeGreaterThan(0);
+
+    // Turn 2: Ask it to recall
+    let r2 = '';
+    for await (const event of agent.chat(
+      'What was the secret code I told you? Reply with ONLY the code.',
+      sessionId,
+    )) {
+      if (event.type === 'text') r2 += event.content;
+    }
+    expect(r2).toContain('XR7');
+  }, 60000);
+
+  it('streaming works for multi-turn conversation', async () => {
+    const sessionId = agent.getDeps().sessions.createSession();
+    let chunks = 0;
+    let fullText = '';
+
+    for await (const event of agent.chat(
+      'Count from 1 to 5, one per line.',
+      sessionId,
+      { stream: true },
+    )) {
+      if (event.type === 'stream') {
+        chunks++;
+        fullText += event.content;
+      }
+    }
+
+    expect(chunks).toBeGreaterThan(0);
+    expect(fullText.length).toBeGreaterThan(0);
+  }, 30000);
 });

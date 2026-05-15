@@ -1,3 +1,4 @@
+import { resolve as pathResolve, sep } from 'node:path';
 import type { XiaobaiConfig } from '../config/manager.js';
 
 export type SandboxMode = 'read-only' | 'workspace-write' | 'full-access';
@@ -57,7 +58,9 @@ export class SandboxManager {
   canWrite(path: string, cwd: string): boolean {
     if (this.isFullAccess()) return true;
     if (this.isReadOnly()) return false;
-    return path.startsWith(cwd);
+    const resolved = pathResolve(path);
+    const resolvedCwd = pathResolve(cwd);
+    return resolved.startsWith(resolvedCwd + sep) || resolved === resolvedCwd;
   }
 
   canExecute(command: string): boolean {

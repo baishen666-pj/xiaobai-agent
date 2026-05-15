@@ -276,10 +276,16 @@ export class AgentLoop {
             // Collect completed tool calls from the stream's state
             const toolCalls: ToolCall[] = [];
             for (const [, tc] of toolCallStates) {
+              let parsedArgs: Record<string, unknown> = {};
+              try {
+                parsedArgs = JSON.parse(tc.args || '{}');
+              } catch {
+                parsedArgs = { _raw: tc.args };
+              }
               toolCalls.push({
                 id: tc.id,
                 name: tc.name,
-                arguments: JSON.parse(tc.args || '{}'),
+                arguments: parsedArgs,
               });
             }
 

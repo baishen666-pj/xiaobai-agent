@@ -101,18 +101,26 @@ export class GoogleProvider implements LLMProvider {
 
   private buildRequestBody(messages: Message[], options: ChatOptions) {
     const contents: any[] = [];
-    let systemInstruction: string | undefined;
+    const systemParts: string[] = [];
+    const pendingToolResults = new Map<string, string>();
 
     for (const m of messages) {
       if (m.role === 'system') {
-        systemInstruction = m.content;
+        systemParts.push(m.content);
         continue;
       }
       if (m.role === 'tool_result') {
-        contents.push({
-          role: 'function',
-          parts: [{ functionResponse: { name: 'tool', response: { output: m.content } } }],
-        });
+        pendingToolResults.set(m.toolCallId ?? '', m.content);
+        continue;
+      }
+      if (m.role === 'assistant' && m.toolCalls?.length) {
+        const parts: any[] = [];
+        if (m.content) parts.push({ text: m.content });
+        for (const tc of m.toolCalls) {
+          parts.push({ functionCall: { name: tc.name, args: tc.arguments } });
+          pendingToolResults.set(tc.id, '');
+        }
+        contents.push({ role: 'model', parts });
         continue;
       }
       contents.push({
@@ -121,20 +129,33 @@ export class GoogleProvider implements LLMProvider {
       });
     }
 
+    // Flush remaining tool results
+    for (const [id, content] of pendingToolResults) {
+      if (content) {
+        contents.push({
+          role: 'function',
+          parts: [{ functionResponse: { name: id, response: { output: content } } }],
+        });
+      }
+    }
+
+    const combinedSystem = systemParts.join('\n\n');
     const body: any = { contents };
-    if (options.system ?? systemInstruction) {
-      body.systemInstruction = { parts: [{ text: options.system ?? systemInstruction ?? '' }] };
+    if (options.system ?? combinedSystem) {
+      body.systemInstruction = { parts: [{ text: options.system ?? combinedSystem ?? '' }] };
     }
     body.generationConfig = {
       maxOutputTokens: options.maxTokens ?? 8192,
       temperature: options.temperature,
     };
     if (options.tools?.length) {
-      body.toolDeclarations = options.tools.map((t) => ({
-        name: t.name,
-        description: t.description,
-        parameters: t.parameters,
-      }));
+      body.tools = [{
+        functionDeclarations: options.tools.map((t) => ({
+          name: t.name,
+          description: t.description,
+          parameters: t.parameters,
+        })),
+      }];
     }
     return body;
   }

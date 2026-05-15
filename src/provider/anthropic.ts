@@ -60,6 +60,8 @@ export class AnthropicProvider implements LLMProvider {
     const client = await this.getClient();
     const formatted = this.formatMessages(messages);
 
+    let inputTokens = 0;
+
     const stream = client.messages.stream({
       model,
       max_tokens: options.maxTokens ?? 8192,
@@ -91,9 +93,12 @@ export class AnthropicProvider implements LLMProvider {
             yield { type: 'tool_call_start', toolCallId: currentToolId, toolCallName: currentToolName };
           }
           break;
+        case 'message_start':
+          inputTokens = event.message?.usage?.input_tokens ?? 0;
+          break;
         case 'message_delta':
           if (event.usage) {
-            yield { type: 'usage', usage: { promptTokens: 0, completionTokens: event.usage.output_tokens, totalTokens: event.usage.output_tokens } };
+            yield { type: 'usage', usage: { promptTokens: inputTokens, completionTokens: event.usage.output_tokens, totalTokens: inputTokens + event.usage.output_tokens } };
           }
           if (event.delta?.stop_reason) {
             yield { type: 'done', stopReason: event.delta.stop_reason };

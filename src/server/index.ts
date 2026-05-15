@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { WebSocketServer } from 'ws';
 import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
-import { join, extname, dirname } from 'node:path';
+import { join, resolve, sep, extname, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EventBridge } from './eventBridge.js';
 import type { Orchestrator, OrchestratorEvent } from '../core/orchestrator.js';
@@ -81,8 +81,10 @@ export class DashboardServer {
     }
 
     const filePath = join(this.staticDir, url === '/' ? 'index.html' : url);
+    const resolvedPath = resolve(filePath);
+    const resolvedStaticDir = resolve(this.staticDir);
 
-    if (!filePath.startsWith(this.staticDir)) {
+    if (!resolvedPath.startsWith(resolvedStaticDir + sep) && resolvedPath !== resolvedStaticDir) {
       res.writeHead(403);
       res.end();
       return;
