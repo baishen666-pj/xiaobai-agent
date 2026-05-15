@@ -81,7 +81,7 @@ export function App() {
 
         <section className="panel tokens-panel">
           <h2>Tokens</h2>
-          <TokenUsageChart total={tokenTotal} tasks={tasks} tokenHistory={tokenHistory} />
+          <TokenUsageChart total={tokenTotal} tasks={tasks} />
           <ChartPanel tokenHistory={tokenHistory} tasks={tasks} />
         </section>
 

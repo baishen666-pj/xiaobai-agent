@@ -1,22 +1,12 @@
-import type { TaskInfo, TokenHistoryEntry } from '../hooks/useWebSocket.js';
+import type { TaskInfo } from '../hooks/useWebSocket.js';
+import { ROLE_COLORS, formatTokens } from '../lib/constants.js';
 
 interface Props {
   total: number;
   tasks: TaskInfo[];
-  tokenHistory?: TokenHistoryEntry[];
 }
 
-const ROLE_COLORS: Record<string, string> = {
-  researcher: 'var(--accent-blue)',
-  coder: 'var(--accent-green)',
-  reviewer: 'var(--accent-purple)',
-  planner: 'var(--accent-yellow)',
-  tester: 'var(--accent-red)',
-  coordinator: 'oklch(55% 0.15 200)',
-};
-
-export function TokenUsageChart({ total, tasks: _tasks }: Props) {
-  const tasks = _tasks;
+export function TokenUsageChart({ total, tasks }: Props) {
   const completedTasks = tasks.filter((t) => t.status === 'completed' && (t.tokensUsed ?? 0) > 0);
   const maxTokens = Math.max(...completedTasks.map((t) => t.tokensUsed ?? 0), 1);
 
@@ -48,10 +38,4 @@ export function TokenUsageChart({ total, tasks: _tasks }: Props) {
       </div>
     </div>
   );
-}
-
-function formatTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return String(n);
 }

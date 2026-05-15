@@ -1,14 +1,8 @@
 import {
-  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
 } from 'recharts';
 import type { TaskInfo } from '../hooks/useWebSocket.js';
-
-const STATUS_COLORS: Record<string, string> = {
-  pending: '#888',
-  running: '#5b8def',
-  completed: '#4caf7d',
-  failed: '#d95555',
-};
+import { STATUS_COLORS } from '../lib/constants.js';
 
 interface Props {
   tasks: TaskInfo[];
@@ -63,7 +57,7 @@ export function TaskTimelineChart({ tasks }: Props) {
           />
           <Bar dataKey="duration" radius={[0, 4, 4, 0]}>
             {data.map((entry, i) => (
-              <rect key={i} fill={entry.fill} />
+              <Cell key={i} fill={entry.fill} />
             ))}
           </Bar>
         </BarChart>

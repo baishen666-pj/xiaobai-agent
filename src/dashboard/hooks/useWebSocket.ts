@@ -73,6 +73,7 @@ export function useWebSocket(url: string) {
   const reconnectAttemptsRef = useRef(0);
   const shouldReconnectRef = useRef(false);
   const urlRef = useRef(url);
+  const idCounterRef = useRef(0);
 
   const [state, setState] = useState<DashboardState>({
     connected: false,
@@ -208,7 +209,7 @@ export function useWebSocket(url: string) {
           setState((prev) => ({
             ...prev,
             chatMessages: [...prev.chatMessages.slice(-99), {
-              id: `start_${Date.now()}`,
+              id: `start_${Date.now()}_${++idCounterRef.current}`,
               sessionId: data.sessionId as string,
               type: 'user' as const,
               content: (data.prompt as string)?.slice(0, 200),
@@ -222,7 +223,7 @@ export function useWebSocket(url: string) {
           setState((prev) => ({
             ...prev,
             chatMessages: [...prev.chatMessages.slice(-99), {
-              id: `turn_${Date.now()}_${prev.chatMessages.length}`,
+              id: `turn_${Date.now()}_${++idCounterRef.current}`,
               sessionId: data.sessionId as string,
               type: 'assistant' as const,
               content: (data.content as string)?.slice(0, 500),
@@ -237,7 +238,7 @@ export function useWebSocket(url: string) {
           setState((prev) => ({
             ...prev,
             chatMessages: [...prev.chatMessages.slice(-99), {
-              id: `tc_${Date.now()}_${prev.chatMessages.length}`,
+              id: `tc_${Date.now()}_${++idCounterRef.current}`,
               sessionId: data.sessionId as string,
               type: 'tool_call' as const,
               content: '',
@@ -252,7 +253,7 @@ export function useWebSocket(url: string) {
           setState((prev) => ({
             ...prev,
             chatMessages: [...prev.chatMessages.slice(-99), {
-              id: `tr_${Date.now()}_${prev.chatMessages.length}`,
+              id: `tr_${Date.now()}_${++idCounterRef.current}`,
               sessionId: data.sessionId as string,
               type: 'tool_result' as const,
               content: (data.output as string)?.slice(0, 200),
@@ -271,7 +272,7 @@ export function useWebSocket(url: string) {
           setState((prev) => ({
             ...prev,
             chatMessages: [...prev.chatMessages.slice(-99), {
-              id: `err_${Date.now()}`,
+              id: `err_${Date.now()}_${++idCounterRef.current}`,
               sessionId: data.sessionId as string,
               type: 'error' as const,
               content: data.error as string,
@@ -286,13 +287,21 @@ export function useWebSocket(url: string) {
   );
 
   const connect = useCallback(() => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) return;
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.close();
+    }
 
     shouldReconnectRef.current = true;
     reconnectAttemptsRef.current = 0;
     urlRef.current = url;
 
-    const ws = new WebSocket(url);
+    let ws: WebSocket;
+    try {
+      ws = new WebSocket(url);
+    } catch (err) {
+      addEvent('error', `Invalid WebSocket URL: ${err instanceof Error ? err.message : String(err)}`);
+      return;
+    }
 
     ws.onopen = () => {
       setState((prev) => ({ ...prev, connected: true }));
@@ -304,7 +313,9 @@ export function useWebSocket(url: string) {
       try {
         const data = JSON.parse(e.data) as OrchestratorWSMessage;
         handleMessage(data);
-      } catch {}
+      } catch (err) {
+        addEvent('error', `Invalid message: ${err instanceof Error ? err.message : String(err)}`);
+      }
     };
 
     ws.onclose = () => {

@@ -16,7 +16,7 @@ export function ExpandableMessage({ content, maxLength = 200, className = '' }: 
   return (
     <span className={`expandable ${className}`}>
       {expanded ? content : content.slice(0, maxLength) + '…'}
-      <button className="expand-btn" onClick={() => setExpanded(!expanded)}>
+      <button className="expand-btn" onClick={() => setExpanded(!expanded)} aria-expanded={expanded}>
         {expanded ? 'show less' : 'show more'}
       </button>
     </span>

@@ -6,6 +6,7 @@ export function useLocalStorage<T>(key: string, defaultValue: T): [T, (value: T 
       const item = localStorage.getItem(key);
       return item ? (JSON.parse(item) as T) : defaultValue;
     } catch {
+      localStorage.removeItem(key);
       return defaultValue;
     }
   });
@@ -15,7 +16,9 @@ export function useLocalStorage<T>(key: string, defaultValue: T): [T, (value: T 
       const next = value instanceof Function ? value(prev) : value;
       try {
         localStorage.setItem(key, JSON.stringify(next));
-      } catch {}
+      } catch {
+        // localStorage may be full or unavailable — continue in-memory only
+      }
       return next;
     });
   }, [key]);

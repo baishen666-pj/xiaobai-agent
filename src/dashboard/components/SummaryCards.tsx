@@ -1,4 +1,5 @@
 import type { AgentInfo, TaskInfo } from '../hooks/useWebSocket.js';
+import { formatTokens } from '../lib/constants.js';
 
 interface Props {
   agents: AgentInfo[];
@@ -16,8 +17,8 @@ export function SummaryCards({ agents, tasks, tokenTotal, chatTokenTotal, eventC
   const totalTokens = tokenTotal + chatTokenTotal;
 
   const cards = [
-    { label: 'Active Agents', value: `${activeAgents}/${agents.length || '-'}`, accent: activeAgents > 0 ? 'var(--accent-green)' : 'var(--text-secondary)' },
-    { label: 'Tasks', value: `${completedTasks}/${tasks.length}`, sub: runningTasks > 0 ? `${runningTasks} running` : undefined, accent: 'var(--accent-blue)' },
+    { label: 'Active Agents', value: `${activeAgents}/${agents.length || '-'}`, sub: runningTasks > 0 ? `${runningTasks} running` : undefined, accent: activeAgents > 0 ? 'var(--accent-green)' : 'var(--text-secondary)' },
+    { label: 'Tasks', value: `${completedTasks}/${tasks.length}`, accent: 'var(--accent-blue)' },
     { label: 'Tokens', value: formatTokens(totalTokens), accent: 'var(--accent-purple)' },
     { label: 'Failed', value: String(failedTasks), accent: failedTasks > 0 ? 'var(--accent-red)' : 'var(--text-secondary)' },
     { label: 'Events', value: String(eventCount), accent: 'var(--accent-teal)' },
@@ -34,10 +35,4 @@ export function SummaryCards({ agents, tasks, tokenTotal, chatTokenTotal, eventC
       ))}
     </div>
   );
-}
-
-function formatTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return String(n);
 }

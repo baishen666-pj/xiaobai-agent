@@ -176,9 +176,6 @@ body {
   font-size: 0.65rem;
   cursor: pointer;
   transition: all 0.15s;
-}
-
-.view-btn {
   display: inline-flex;
   align-items: center;
   gap: 0.25rem;

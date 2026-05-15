@@ -1,14 +1,6 @@
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
 import type { TaskInfo } from '../hooks/useWebSocket.js';
-
-const ROLE_COLORS: Record<string, string> = {
-  researcher: '#5b8def',
-  coder: '#4caf7d',
-  reviewer: '#9c6bca',
-  planner: '#d4a843',
-  tester: '#d95555',
-  coordinator: '#3bb5a0',
-};
+import { ROLE_COLORS } from '../lib/constants.js';
 
 interface Props {
   tasks: TaskInfo[];
