@@ -376,6 +376,97 @@ program
     }
   });
 
+program
+  .command('skills')
+  .description('Manage skills')
+  .addCommand(
+    new Command('list')
+      .description('List installed skills')
+      .action(async () => {
+        const agent = await XiaobaiAgent.create();
+        const skills = agent.getSkills();
+        if (!skills) {
+          console.log(chalk.gray('Skills system not enabled.'));
+          return;
+        }
+        const list = skills.listSkills();
+        if (list.length === 0) {
+          console.log(chalk.gray('No skills installed. Create one with: xiaobai skills create <name>'));
+          return;
+        }
+        console.log(chalk.cyan.bold(`\n  Installed Skills (${list.length})\n`));
+        for (const skill of list) {
+          console.log(`  ${chalk.yellow(skill.name.padEnd(20))} ${chalk.gray(skill.category)} ${skill.description}`);
+        }
+        console.log();
+      }),
+  )
+  .addCommand(
+    new Command('create <name>')
+      .description('Create a new skill from template')
+      .option('-d, --description <desc>', 'Skill description', '')
+      .option('-c, --category <cat>', 'Skill category', 'general')
+      .action(async (name: string, options: { description: string; category: string }) => {
+        const agent = await XiaobaiAgent.create();
+        const skills = agent.getSkills();
+        if (!skills) { console.log(chalk.red('Skills not enabled.')); return; }
+        const desc = options.description || `${name} skill`;
+        await skills.create(name, desc, options.category as any);
+        console.log(chalk.green(`  Created skill: ${name}`));
+        console.log(chalk.gray(`  Edit at: ~/.xiaobai/default/skills/${name}/SKILL.md`));
+      }),
+  )
+  .addCommand(
+    new Command('show <name>')
+      .description('Show skill content')
+      .action(async (name: string) => {
+        const agent = await XiaobaiAgent.create();
+        const skills = agent.getSkills();
+        const skill = skills?.getSkill(name);
+        if (!skill) { console.log(chalk.red(`  Skill not found: ${name}`)); return; }
+        console.log(chalk.cyan.bold(`\n  ${skill.name} (${skill.category}) v${skill.version}`));
+        console.log(chalk.gray(`  ${skill.description}\n`));
+        console.log(skill.content);
+        console.log();
+      }),
+  )
+  .addCommand(
+    new Command('install <url>')
+      .description('Install a skill from URL')
+      .option('-n, --name <name>', 'Override skill name')
+      .action(async (url: string, options: { name?: string }) => {
+        const agent = await XiaobaiAgent.create();
+        const skills = agent.getSkills();
+        if (!skills) { console.log(chalk.red('Skills not enabled.')); return; }
+        console.log(chalk.gray(`  Installing from: ${url}`));
+        const skill = await skills.installFromUrl(url, options.name);
+        if (skill) {
+          console.log(chalk.green(`  Installed: ${skill.name}`));
+        } else {
+          console.log(chalk.red('  Failed to install skill.'));
+        }
+      }),
+  )
+  .addCommand(
+    new Command('search <query>')
+      .description('Search installed skills')
+      .action(async (query: string) => {
+        const agent = await XiaobaiAgent.create();
+        const skills = agent.getSkills();
+        if (!skills) { console.log(chalk.red('Skills not enabled.')); return; }
+        const results = skills.search(query);
+        if (results.length === 0) {
+          console.log(chalk.gray('  No matching skills found.'));
+          return;
+        }
+        console.log(chalk.cyan.bold(`\n  Search Results (${results.length})\n`));
+        for (const skill of results) {
+          console.log(`  ${chalk.yellow(skill.name.padEnd(20))} ${skill.description}`);
+        }
+        console.log();
+      }),
+  );
+
 import chalk from 'chalk';
 
 program.parse();

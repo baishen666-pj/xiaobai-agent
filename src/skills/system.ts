@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, watchFile, unwatchFile } from 'node:fs';
 import { join } from 'node:path';
 
 export interface Skill {
@@ -17,10 +17,21 @@ export interface Skill {
   metadata?: Record<string, unknown>;
 }
 
+export interface SkillExecutionContext {
+  variables: Record<string, string>;
+  tools: string[];
+  memory: string[];
+  userMessage: string;
+}
+
+const SKILL_CATEGORIES = ['coding', 'analysis', 'writing', 'planning', 'review', 'devops', 'general'] as const;
+type SkillCategory = (typeof SKILL_CATEGORIES)[number];
+
 export class SkillSystem {
   private skillsDir: string;
   private skills = new Map<string, Skill>();
   private loaded = false;
+  private watchers = new Map<string, string>();
 
   constructor(configDir: string) {
     this.skillsDir = join(configDir, 'skills');
@@ -45,15 +56,45 @@ export class SkillSystem {
     this.loaded = true;
   }
 
+  async reload(): Promise<void> {
+    this.loaded = false;
+    await this.loadAll();
+  }
+
+  watchForChanges(callback?: () => void): void {
+    if (!existsSync(this.skillsDir)) return;
+
+    try {
+      import('node:fs').then(({ watch }) => {
+        watch(this.skillsDir, { recursive: true }, async (eventType, filename) => {
+          if (filename && (filename.endsWith('SKILL.md') || filename.endsWith('.md'))) {
+            await this.reload();
+            callback?.();
+          }
+        });
+        this.watchers.set('main', 'watching');
+      });
+    } catch {
+      // Watch not supported
+    }
+  }
+
+  stopWatching(): void {
+    for (const [name] of this.watchers) {
+      try { unwatchFile(join(this.skillsDir, name)); } catch {}
+    }
+    this.watchers.clear();
+  }
+
   private loadSkillFromDir(dir: string): Skill | null {
     const skillPath = join(dir, 'SKILL.md');
     if (!existsSync(skillPath)) return null;
 
     const content = readFileSync(skillPath, 'utf-8');
-    return this.parseSkillMd(content);
+    return this.parseSkillMd(content, dir);
   }
 
-  private parseSkillMd(content: string): Skill {
+  private parseSkillMd(content: string, _dir?: string): Skill {
     const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
     const defaultSkill: Skill = {
       name: 'unnamed',
@@ -73,6 +114,15 @@ export class SkillSystem {
       return match?.[1]?.trim();
     };
 
+    const getFmArray = (key: string): string[] | undefined => {
+      const section = fm.match(new RegExp(`^${key}:\\s*\\n((?:\\s+-\\s+.+\\n?)*)`, 'm'));
+      if (!section) return undefined;
+      return section[1]
+        .split('\n')
+        .map((l) => l.replace(/^\s+-\s+/, '').trim())
+        .filter(Boolean);
+    };
+
     return {
       ...defaultSkill,
       name: getFmValue('name') ?? 'unnamed',
@@ -80,6 +130,7 @@ export class SkillSystem {
       category: getFmValue('category') ?? 'general',
       version: getFmValue('version') ?? '1.0.0',
       author: getFmValue('author'),
+      requires: getFmArray('requires') ? { env: getFmArray('requires') } : undefined,
       content: body.trim(),
     };
   }
@@ -87,9 +138,7 @@ export class SkillSystem {
   getSummary(): string {
     const entries = Array.from(this.skills.values());
     if (entries.length === 0) return '';
-    return entries
-      .map((s) => `- ${s.name}: ${s.description}`)
-      .join('\n');
+    return entries.map((s) => `- ${s.name}: ${s.description}`).join('\n');
   }
 
   getSkill(name: string): Skill | undefined {
@@ -100,17 +149,137 @@ export class SkillSystem {
     return Array.from(this.skills.values());
   }
 
-  async create(name: string, content: string): Promise<void> {
+  listByCategory(category: string): Skill[] {
+    return Array.from(this.skills.values()).filter((s) => s.category === category);
+  }
+
+  search(query: string): Skill[] {
+    const lower = query.toLowerCase();
+    return Array.from(this.skills.values()).filter(
+      (s) =>
+        s.name.toLowerCase().includes(lower) ||
+        s.description.toLowerCase().includes(lower) ||
+        s.content.toLowerCase().includes(lower),
+    );
+  }
+
+  async create(name: string, description: string, category: SkillCategory = 'general', content?: string): Promise<Skill> {
     const dir = join(this.skillsDir, name);
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, 'SKILL.md'), content, 'utf-8');
-    const skill = this.parseSkillMd(content);
+
+    const skillContent = content ?? this.generateTemplate(name, description, category);
+    writeFileSync(join(dir, 'SKILL.md'), skillContent, 'utf-8');
+    const skill = this.parseSkillMd(skillContent, dir);
     this.skills.set(skill.name, skill);
+    return skill;
   }
 
   async delete(name: string): Promise<boolean> {
     if (!this.skills.has(name)) return false;
     this.skills.delete(name);
     return true;
+  }
+
+  async installFromUrl(url: string, name?: string): Promise<Skill | null> {
+    try {
+      const response = await fetch(url);
+      if (!response.ok) return null;
+      const content = await response.text();
+      const parsed = this.parseSkillMd(content);
+      const skillName = name ?? parsed.name;
+      return this.create(skillName, parsed.description, (parsed.category as SkillCategory) ?? 'general', content);
+    } catch {
+      return null;
+    }
+  }
+
+  renderPrompt(name: string, context?: Partial<SkillExecutionContext>): string | null {
+    const skill = this.skills.get(name);
+    if (!skill) return null;
+
+    let rendered = skill.content;
+
+    if (context?.variables) {
+      for (const [key, value] of Object.entries(context.variables)) {
+        rendered = rendered.replaceAll(`{{${key}}}`, value);
+      }
+    }
+
+    // Replace remaining unresolved variables with placeholders
+    rendered = rendered.replaceAll(/\{\{(\w+)\}\}/g, (_, key) => `[${key}]`);
+
+    return rendered;
+  }
+
+  buildSystemPrompt(selectedSkills?: string[]): string {
+    const skills = selectedSkills
+      ? selectedSkills.map((n) => this.skills.get(n)).filter(Boolean) as Skill[]
+      : Array.from(this.skills.values());
+
+    if (skills.length === 0) return '';
+
+    const parts: string[] = ['## Available Skills\n'];
+    for (const skill of skills) {
+      parts.push(`### ${skill.name}`);
+      parts.push(skill.description);
+      parts.push('');
+    }
+
+    return parts.join('\n');
+  }
+
+  checkRequirements(name: string): { satisfied: boolean; missing: string[] } {
+    const skill = this.skills.get(name);
+    if (!skill?.requires) return { satisfied: true, missing: [] };
+
+    const missing: string[] = [];
+
+    if (skill.requires.env) {
+      for (const envVar of skill.requires.env) {
+        if (!process.env[envVar]) missing.push(`env: ${envVar}`);
+      }
+    }
+
+    return { satisfied: missing.length === 0, missing };
+  }
+
+  getStats(): { total: number; categories: Record<string, number> } {
+    const categories: Record<string, number> = {};
+    for (const skill of this.skills.values()) {
+      categories[skill.category] = (categories[skill.category] ?? 0) + 1;
+    }
+    return { total: this.skills.size, categories };
+  }
+
+  private generateTemplate(name: string, description: string, category: string): string {
+    return `---
+name: ${name}
+description: ${description}
+category: ${category}
+version: 1.0.0
+---
+
+# ${name}
+
+${description}
+
+## Instructions
+
+1. Analyze the request
+2. Apply the skill logic
+3. Return the result
+
+## Examples
+
+\`\`\`
+Input: {{input}}
+Output: [result]
+\`\`\`
+
+## Notes
+
+- Adapt to the specific context
+- Follow the user's preferences
+`;
   }
 }

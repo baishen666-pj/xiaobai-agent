@@ -5,6 +5,7 @@ import type { HookSystem } from '../hooks/system.js';
 import type { ConfigManager } from '../config/manager.js';
 import type { MemorySystem } from '../memory/system.js';
 import type { SecurityManager } from '../security/manager.js';
+import type { SkillSystem } from '../skills/system.js';
 import { CompactionEngine } from './compaction.js';
 
 export type StopReason =
@@ -52,6 +53,7 @@ export class AgentLoop {
   private memory: MemorySystem;
   private security: SecurityManager;
   private compaction: CompactionEngine;
+  private skills?: SkillSystem;
 
   constructor(deps: {
     provider: ProviderRouter;
@@ -61,6 +63,7 @@ export class AgentLoop {
     config: ConfigManager;
     memory: MemorySystem;
     security: SecurityManager;
+    skills?: SkillSystem;
   }) {
     this.provider = deps.provider;
     this.tools = deps.tools;
@@ -69,6 +72,7 @@ export class AgentLoop {
     this.config = deps.config;
     this.memory = deps.memory;
     this.security = deps.security;
+    this.skills = deps.skills;
     this.compaction = new CompactionEngine(deps.provider);
   }
 
@@ -291,7 +295,8 @@ export class AgentLoop {
   }
 
   private async loadSkillSummary(): Promise<string | null> {
-    return null;
+    if (!this.skills) return null;
+    return this.skills.buildSystemPrompt() || null;
   }
 
   private async loadInstructions(): Promise<string | null> {

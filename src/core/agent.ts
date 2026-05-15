@@ -8,6 +8,7 @@ import { MemorySystem } from '../memory/system.js';
 import { SecurityManager } from '../security/manager.js';
 import { MCPSession } from '../mcp/session.js';
 import { SandboxManager } from '../sandbox/manager.js';
+import { SkillSystem } from '../skills/system.js';
 
 export interface AgentDeps {
   config: ConfigManager;
@@ -19,6 +20,7 @@ export interface AgentDeps {
   security: SecurityManager;
   mcp?: MCPSession;
   sandbox?: SandboxManager;
+  skills?: SkillSystem;
 }
 
 export class XiaobaiAgent {
@@ -35,6 +37,7 @@ export class XiaobaiAgent {
       config: deps.config,
       memory: deps.memory,
       security: deps.security,
+      skills: deps.skills,
     });
   }
 
@@ -76,6 +79,10 @@ export class XiaobaiAgent {
     return this.deps.security;
   }
 
+  getSkills(): SkillSystem | undefined {
+    return this.deps.skills;
+  }
+
   static async create(configDir?: string): Promise<XiaobaiAgent> {
     const config = new ConfigManager();
     const cfg = config.get();
@@ -92,6 +99,10 @@ export class XiaobaiAgent {
     tools.registerBatch(builtInTools.getBuiltinTools({ security, config, memory, sandbox }));
 
     const mcp = new MCPSession(config.getConfigDir());
+    const skills = new SkillSystem(config.getConfigDir());
+    if (cfg.skills.enabled) {
+      await skills.loadAll();
+    }
 
     return new XiaobaiAgent({
       config,
@@ -103,6 +114,7 @@ export class XiaobaiAgent {
       security,
       mcp,
       sandbox,
+      skills,
     });
   }
 }
