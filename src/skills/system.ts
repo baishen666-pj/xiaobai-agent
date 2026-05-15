@@ -32,6 +32,7 @@ type SkillCategory = (typeof SKILL_CATEGORIES)[number];
 const BUILTIN_SKILLS = [
   'code-review', 'test-gen', 'refactor', 'doc-writer',
   'security-audit', 'debug', 'explain',
+  'perf-audit', 'api-design', 'git-ops', 'migrate', 'architect', 'i18n',
 ] as const;
 
 export class SkillSystem {
