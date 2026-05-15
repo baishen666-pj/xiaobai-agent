@@ -1,5 +1,5 @@
 import type { ToolRegistry, ToolResult } from '../tools/registry.js';
-import type { ProviderRouter } from '../provider/router.js';
+import type { ProviderRouter, ProviderResponse } from '../provider/router.js';
 import type { SessionManager, Message } from '../session/manager.js';
 import type { HookSystem, HookResult } from '../hooks/system.js';
 import type { ConfigManager } from '../config/manager.js';
@@ -420,14 +420,4 @@ export class AgentLoop {
   }
 }
 
-interface ToolCall {
-  id: string;
-  name: string;
-  arguments: Record<string, unknown>;
-}
-
-interface ProviderResponse {
-  content?: string;
-  toolCalls?: ToolCall[];
-  usage?: { promptTokens: number; completionTokens: number; totalTokens: number };
-}
+type ToolCall = { id: string; name: string; arguments: Record<string, unknown> };

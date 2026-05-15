@@ -62,9 +62,10 @@ describe('SessionManager', () => {
     expect(messages).toEqual([]);
   });
 
-  it('listSessions returns empty array when no sessions', () => {
+  it('listSessions returns empty array when no sessions', async () => {
     const sm = new SessionManager(tempDir);
-    expect(sm.listSessions()).toEqual([]);
+    const sessions = await sm.listSessions();
+    expect(sessions).toEqual([]);
   });
 
   it('listSessions returns session metadata', async () => {
@@ -75,7 +76,7 @@ describe('SessionManager', () => {
       { role: 'user' as const, content: 'test', timestamp: now },
       { role: 'assistant' as const, content: 'ok', timestamp: now + 1000 },
     ]);
-    const sessions = sm.listSessions();
+    const sessions = await sm.listSessions();
     expect(sessions).toHaveLength(1);
     expect(sessions[0].id).toBe(id);
     expect(sessions[0].messageCount).toBe(2);
@@ -89,7 +90,7 @@ describe('SessionManager', () => {
     const id2 = sm.createSession();
     await sm.saveMessages(id1, [{ role: 'user' as const, content: 'a', timestamp: 1000 }]);
     await sm.saveMessages(id2, [{ role: 'user' as const, content: 'b', timestamp: 2000 }]);
-    const sessions = sm.listSessions();
+    const sessions = await sm.listSessions();
     expect(sessions[0].id).toBe(id2);
     expect(sessions[1].id).toBe(id1);
   });
@@ -99,7 +100,7 @@ describe('SessionManager', () => {
     const id = sm.createSession();
     const path = join(tempDir, 'sessions', `${id}.json`);
     writeFileSync(path, 'bad json', 'utf-8');
-    const sessions = sm.listSessions();
+    const sessions = await sm.listSessions();
     expect(sessions).toHaveLength(1);
     expect(sessions[0].id).toBe(id);
     expect(sessions[0].messageCount).toBe(0);
@@ -108,14 +109,14 @@ describe('SessionManager', () => {
   it('deleteSession removes the session file', async () => {
     const sm = new SessionManager(tempDir);
     const id = sm.createSession();
-    const result = sm.deleteSession(id);
+    const result = await sm.deleteSession(id);
     expect(result).toBe(true);
-    expect(sm.listSessions()).toHaveLength(0);
+    expect((await sm.listSessions())).toHaveLength(0);
   });
 
-  it('deleteSession throws for invalid session ID', () => {
+  it('deleteSession throws for invalid session ID', async () => {
     const sm = new SessionManager(tempDir);
-    expect(() => sm.deleteSession('nonexistent')).toThrow('Invalid session ID');
+    await expect(sm.deleteSession('nonexistent')).rejects.toThrow('Invalid session ID');
   });
 
   it('createSession generates unique IDs', () => {
@@ -131,7 +132,7 @@ describe('SessionManager', () => {
     const sm = new SessionManager(tempDir);
     await expect(sm.loadMessages('../../../etc/passwd')).rejects.toThrow('Invalid session ID');
     await expect(sm.saveMessages('../../../etc/passwd', [])).rejects.toThrow('Invalid session ID');
-    expect(() => sm.deleteSession('../../../etc/passwd')).toThrow('Invalid session ID');
+    await expect(sm.deleteSession('../../../etc/passwd')).rejects.toThrow('Invalid session ID');
   });
 
   it('rejects empty session ID', async () => {

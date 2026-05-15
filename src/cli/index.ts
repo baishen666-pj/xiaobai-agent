@@ -106,7 +106,7 @@ program
           }
 
           if (trimmed === '/sessions') {
-            const sessions = agent.getDeps().sessions.listSessions?.() ?? [];
+            const sessions = await agent.getDeps().sessions.listSessions?.() ?? [];
             if (sessions.length === 0) {
               console.log(chalk.gray('  No saved sessions.\n'));
             } else {

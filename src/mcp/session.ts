@@ -444,7 +444,7 @@ class MCPSSEConnection extends MCPConnection {
         }
       };
 
-      processStream();
+      processStream().catch(() => { /* stream error handled inside */ });
 
       await this.sendSSEInit();
 
