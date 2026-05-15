@@ -81,3 +81,61 @@ describe('ProviderRouter Streaming', () => {
     expect(typeof gen[Symbol.asyncIterator]).toBe('function');
   });
 });
+
+describe('Multi-Provider Support', () => {
+  it('lists available providers', () => {
+    const providers = ProviderRouter.getAvailableProviders();
+    expect(providers).toContain('anthropic');
+    expect(providers).toContain('openai');
+    expect(providers).toContain('google');
+    expect(providers).toContain('groq');
+    expect(providers).toContain('ollama');
+  });
+
+  it('creates Anthropic provider', () => {
+    const config = makeConfig({ default: 'anthropic' });
+    const router = new ProviderRouter(config);
+    const provider = (router as any).getProvider('anthropic');
+    expect(provider.name).toBe('anthropic');
+  });
+
+  it('creates OpenAI provider', () => {
+    const router = new ProviderRouter(makeConfig({ default: 'openai' }));
+    const provider = (router as any).getProvider('openai');
+    expect(provider.name).toBe('openai');
+  });
+
+  it('creates Google provider', () => {
+    const config = makeConfig({ default: 'google' });
+    const router = new ProviderRouter(config);
+    const provider = (router as any).getProvider('google');
+    expect(provider.name).toBe('google');
+  });
+
+  it('creates Groq provider with correct base URL', () => {
+    const config = makeConfig({ default: 'groq' });
+    const router = new ProviderRouter(config);
+    const provider = (router as any).getProvider('groq');
+    expect(provider.name).toBe('groq');
+  });
+
+  it('creates Ollama provider with local base URL', () => {
+    const config = makeConfig({ default: 'ollama' });
+    const router = new ProviderRouter(config);
+    const provider = (router as any).getProvider('ollama');
+    expect(provider.name).toBe('ollama');
+  });
+
+  it('caches provider instances', () => {
+    const router = new ProviderRouter(makeConfig());
+    const p1 = (router as any).getProvider('openai');
+    const p2 = (router as any).getProvider('openai');
+    expect(p1).toBe(p2);
+  });
+
+  it('treats unknown providers as OpenAI-compatible', () => {
+    const router = new ProviderRouter(makeConfig());
+    const provider = (router as any).getProvider('custom-llm');
+    expect(provider.name).toBe('custom-llm');
+  });
+});

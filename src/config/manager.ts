@@ -45,8 +45,8 @@ export interface XiaobaiConfig {
 export interface ProviderConfig {
   name: string;
   apiKey?: string;
-  baseUrl: string;
-  apiMode: 'chat-completions' | 'responses' | 'anthropic';
+  baseUrl?: string;
+  apiMode: 'chat-completions' | 'responses' | 'anthropic' | 'google';
 }
 
 export interface ExternalMemoryProvider {
