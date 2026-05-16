@@ -1,4 +1,5 @@
-import type { Tool, ToolContext, ToolResult } from './registry.js';
+import type { Tool, ToolContext, ToolResult, ToolRegistry } from './registry.js';
+import type { LoopEvent } from '../core/loop.js';
 
 export interface ToolContextExtended extends ToolContext {
   memory?: import('../memory/system.js').MemorySystem;
@@ -7,6 +8,8 @@ export interface ToolContextExtended extends ToolContext {
   sessions?: import('../session/manager.js').SessionManager;
   hooks?: import('../hooks/system.js').HookSystem;
   skills?: import('../skills/system.js').SkillSystem;
+  tools?: ToolRegistry;
+  onSubAgentEvent?: (event: LoopEvent) => void;
 }
 
 export const memoryTool = (context?: ToolContext): Tool => ({
@@ -130,8 +133,12 @@ export function createAgentTool(context?: ToolContextExtended): Tool {
         plan: 'plan',
       };
 
-      const result = await subEngine.spawn(prompt, new ToolRegistry(), {
+      const parentTools = (ctx as Record<string, unknown>).tools as ToolRegistry | undefined;
+      const onEvent = (ctx as Record<string, unknown>).onSubAgentEvent as ((event: LoopEvent) => void) | undefined;
+
+      const result = await subEngine.spawn(prompt, parentTools ?? new ToolRegistry(), {
         definitionName: typeToDef[type],
+        onEvent,
       });
 
       subEngine.destroy();

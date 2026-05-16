@@ -987,27 +987,32 @@ describe('MCPSession — SSE connections', () => {
   });
 
   it('connectSSE establishes SSE stream and verifies fetch call', async () => {
-    // The SSE connection's start() calls fetch and then sendSSEInit() which calls
-    // sendRequest('initialize'). Since sendRequest writes to process.stdin (null for SSE),
-    // the init response must come via the SSE stream. We mock the reader to deliver it.
+    // New SSE protocol: first receive endpoint event, then POST initialize to it,
+    // then receive init response via SSE stream.
+    const endpointData = 'event: endpoint\ndata: http://localhost/message\n\n';
     const initResponse = JSON.stringify({ jsonrpc: '2.0', id: 1, result: { capabilities: {} } });
-    const sseData = `data: ${initResponse}\n\n`;
+    const responseData = `data: ${initResponse}\n\n`;
 
     const mockReader = { read: vi.fn() };
-    // First read: deliver the init response
-    mockReader.read.mockResolvedValueOnce({ done: false, value: new TextEncoder().encode(sseData) });
-    // Second read: signal stream end
+    // First read: deliver the endpoint event
+    mockReader.read.mockResolvedValueOnce({ done: false, value: new TextEncoder().encode(endpointData) });
+    // Second read: deliver the init response
+    mockReader.read.mockResolvedValueOnce({ done: false, value: new TextEncoder().encode(responseData) });
+    // Third read: signal stream end
     mockReader.read.mockResolvedValueOnce({ done: true, value: undefined });
 
     mockFetch.mockResolvedValueOnce({
       ok: true,
       body: { getReader: () => mockReader },
     });
+    // Mock POST for initialize request
+    mockFetch.mockResolvedValueOnce({ ok: true });
+    // Mock POST for initialized notification
+    mockFetch.mockResolvedValueOnce({ ok: true });
 
     const session = new MCPSession(testDir);
     session.addServer({ name: 'sse-ok', url: 'http://localhost/sse', enabled: true });
 
-    // connectSSE should succeed — the SSE stream delivers the init response
     const conn = await session.connectSSE('sse-ok');
 
     expect(mockFetch).toHaveBeenCalledWith('http://localhost/sse', expect.objectContaining({
@@ -1015,9 +1020,7 @@ describe('MCPSession — SSE connections', () => {
       headers: { Accept: 'text/event-stream' },
     }));
 
-    // The connection might succeed or fail depending on timing of sendSSEInit
-    // Either way, fetch was called correctly. If it succeeded, conn should not be null.
-    // The key coverage here is the fetch path and error branches.
+    // The key coverage here is the fetch path and SSE endpoint discovery
   });
 
   it('disconnect stops SSE connection', async () => {

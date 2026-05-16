@@ -5,6 +5,9 @@ import type { ProviderResponse, StreamChunk, ChatOptions, ProviderConfig, LLMPro
 import { AnthropicProvider } from './anthropic.js';
 import { OpenAICompatibleProvider } from './openai.js';
 import { GoogleProvider } from './google.js';
+import { CircuitBreaker } from './circuit-breaker.js';
+import { RateLimiter } from './rate-limiter.js';
+import { ProviderMetrics } from './provider-metrics.js';
 
 export type { ProviderResponse, StreamChunk, ChatOptions, ProviderConfig, LLMProvider } from './types.js';
 
@@ -37,13 +40,25 @@ const PROVIDER_FACTORIES: Record<string, (config: ProviderConfig) => LLMProvider
   openaiCompatible: (c) => new OpenAICompatibleProvider(c),
 };
 
+export interface RouterOptions {
+  circuitBreaker?: CircuitBreaker;
+  rateLimiter?: RateLimiter;
+  metrics?: ProviderMetrics;
+}
+
 export class ProviderRouter {
   private config: XiaobaiConfig;
   private providers = new Map<string, LLMProvider>();
   private pluginFactories = new Map<string, (config: ProviderConfig) => LLMProvider>();
+  private circuitBreaker?: CircuitBreaker;
+  private rateLimiter?: RateLimiter;
+  private metrics?: ProviderMetrics;
 
-  constructor(config: XiaobaiConfig) {
+  constructor(config: XiaobaiConfig, options?: RouterOptions) {
     this.config = config;
+    this.circuitBreaker = options?.circuitBreaker;
+    this.rateLimiter = options?.rateLimiter;
+    this.metrics = options?.metrics;
   }
 
   registerProviderFactory(name: string, factory: (config: ProviderConfig) => LLMProvider): void {
@@ -89,8 +104,14 @@ export class ProviderRouter {
   }
 
   async chat(messages: Message[], options: ChatOptions = {}): Promise<ProviderResponse | null> {
-    const providerName = this.config.provider.default;
+    const providerName = this.selectProvider();
     const model = this.config.model.default;
+
+    // Rate limiting
+    if (this.rateLimiter && !this.rateLimiter.acquire(providerName)) {
+      const waited = await this.rateLimiter.acquireOrWait(providerName, 1, 5000);
+      if (!waited) throw new Error(`Rate limit exceeded for ${providerName}`);
+    }
 
     return this.withRetry(providerName, model, messages, options);
   }
@@ -132,17 +153,38 @@ export class ProviderRouter {
     options: ChatOptions,
     attempt = 0,
   ): Promise<ProviderResponse> {
+    // Circuit breaker check
+    if (this.circuitBreaker && !this.circuitBreaker.isAvailable()) {
+      const fallback = await this.tryFallbackProvider(messages, options);
+      if (fallback) return fallback;
+      throw new Error(`Circuit breaker open for ${providerName}, no fallback available`);
+    }
+
+    const start = Date.now();
     try {
+      if (this.circuitBreaker) this.circuitBreaker.beginHalfOpenAttempt();
       const provider = this.getProvider(providerName);
-      return await provider.chat(messages, model, options);
+      const response = await provider.chat(messages, model, options);
+
+      this.circuitBreaker?.recordSuccess();
+      this.recordMetrics(providerName, model, start, response, true);
+
+      return response;
     } catch (error) {
+      this.circuitBreaker?.recordFailure();
+      this.recordMetrics(providerName, model, start, null, false, error);
+
       if (attempt >= MAX_RETRIES - 1 || !this.isRetryable(error)) {
+        // Try fallback model on same provider
         if (this.config.model.fallback && attempt === 0) {
           try {
-            const fallbackModel = this.config.model.fallback;
+            const fbModel = this.config.model.fallback;
             const provider = this.getProvider(providerName);
-            return await provider.chat(messages, fallbackModel, options);
+            return await provider.chat(messages, fbModel, options);
           } catch {
+            // Try cross-provider failover
+            const crossFallback = await this.tryFallbackProvider(messages, options);
+            if (crossFallback) return crossFallback;
             throw error;
           }
         }
@@ -153,6 +195,54 @@ export class ProviderRouter {
       await new Promise((resolve) => setTimeout(resolve, delay));
       return this.withRetry(providerName, model, messages, options, attempt + 1);
     }
+  }
+
+  private async tryFallbackProvider(
+    messages: Message[],
+    options: ChatOptions,
+  ): Promise<ProviderResponse | null> {
+    const fallbacks = this.config.provider.fallbacks;
+    if (!fallbacks?.length) return null;
+
+    for (const fb of fallbacks) {
+      try {
+        const provider = this.getProvider(fb.name);
+        const model = this.config.model.default;
+        const response = await provider.chat(messages, model, options);
+        this.circuitBreaker?.recordSuccess();
+        this.recordMetrics(fb.name, model, Date.now(), response, true);
+        return response;
+      } catch {
+        this.circuitBreaker?.recordFailure();
+      }
+    }
+    return null;
+  }
+
+  private selectProvider(): string {
+    return this.config.provider.default;
+  }
+
+  private recordMetrics(
+    provider: string,
+    model: string,
+    startMs: number,
+    response: ProviderResponse | null,
+    success: boolean,
+    error?: unknown,
+  ): void {
+    if (!this.metrics) return;
+    const latencyMs = Date.now() - startMs;
+    this.metrics.record({
+      provider,
+      model,
+      latencyMs,
+      promptTokens: response?.usage?.promptTokens ?? 0,
+      completionTokens: response?.usage?.completionTokens ?? 0,
+      success,
+      errorType: error instanceof Error ? error.message.slice(0, 100) : undefined,
+      timestamp: Date.now(),
+    });
   }
 
   private isRetryable(error: unknown): boolean {

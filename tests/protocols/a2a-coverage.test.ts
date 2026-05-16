@@ -1,5 +1,5 @@
-import { describe, it, expect, afterEach } from 'vitest';
-import { A2AServer } from '../../src/protocols/a2a/server.js';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { A2AServer, XiaobaiAgentHandler } from '../../src/protocols/a2a/server.js';
 import { A2AClient } from '../../src/protocols/a2a/client.js';
 import { Role, TaskState } from '../../src/protocols/a2a/types.js';
 import type { A2AMessage, SendMessageResponse, A2ATask, A2AServerHandler, AgentCard } from '../../src/protocols/a2a/types.js';
@@ -323,5 +323,145 @@ describe('A2AServer - extended coverage', () => {
     expect(response.status).toBe(200);
     expect(receivedConfig).toBeDefined();
     expect(receivedConfig.acceptedOutputModes).toContain('text/plain');
+  });
+});
+
+describe('XiaobaiAgentHandler', () => {
+  let a2aServer: A2AServer;
+
+  afterEach(async () => {
+    if (a2aServer) await a2aServer.stop();
+  });
+
+  it('processes message via agent.chatSync and returns completed task', async () => {
+    const mockAgent = {
+      chatSync: vi.fn().mockResolvedValue('Analysis complete: no issues found'),
+    } as any;
+
+    const handler = new XiaobaiAgentHandler(mockAgent);
+    const message: A2AMessage = {
+      messageId: 'm1',
+      role: Role.USER,
+      parts: [{ text: 'Review the code' }],
+    };
+
+    const response = await handler.onMessage(message);
+    if ('task' in response) {
+      expect(response.task.status.state).toBe(TaskState.COMPLETED);
+      expect(response.task.history).toHaveLength(2);
+      expect(response.task.history![1].role).toBe(Role.AGENT);
+      expect(response.task.history![1].parts[0].text).toBe('Analysis complete: no issues found');
+    }
+    expect(mockAgent.chatSync).toHaveBeenCalledWith('Review the code');
+  });
+
+  it('returns failed task when chatSync throws', async () => {
+    const mockAgent = {
+      chatSync: vi.fn().mockRejectedValue(new Error('Provider unavailable')),
+    } as any;
+
+    const handler = new XiaobaiAgentHandler(mockAgent);
+    const message: A2AMessage = {
+      messageId: 'm2',
+      role: Role.USER,
+      parts: [{ text: 'Do something' }],
+    };
+
+    const response = await handler.onMessage(message);
+    if ('task' in response) {
+      expect(response.task.status.state).toBe(TaskState.FAILED);
+      expect(response.task.status.message!.parts[0].text).toContain('Provider unavailable');
+    }
+  });
+
+  it('returns failed task for empty message', async () => {
+    const mockAgent = { chatSync: vi.fn() } as any;
+    const handler = new XiaobaiAgentHandler(mockAgent);
+
+    const message: A2AMessage = {
+      messageId: 'm3',
+      role: Role.USER,
+      parts: [{ text: '' }],
+    };
+
+    const response = await handler.onMessage(message);
+    if ('task' in response) {
+      expect(response.task.status.state).toBe(TaskState.FAILED);
+    }
+    expect(mockAgent.chatSync).not.toHaveBeenCalled();
+  });
+
+  it('returns null for unknown task onGetTask', async () => {
+    const mockAgent = { chatSync: vi.fn() } as any;
+    const handler = new XiaobaiAgentHandler(mockAgent);
+
+    const result = await handler.onGetTask('nonexistent');
+    expect(result).toBeNull();
+  });
+
+  it('retrieves task by ID after onMessage', async () => {
+    const mockAgent = {
+      chatSync: vi.fn().mockResolvedValue('Done'),
+    } as any;
+
+    const handler = new XiaobaiAgentHandler(mockAgent);
+    const message: A2AMessage = {
+      messageId: 'm4',
+      role: Role.USER,
+      parts: [{ text: 'Hello' }],
+    };
+
+    const response = await handler.onMessage(message);
+    if ('task' in response) {
+      const retrieved = await handler.onGetTask(response.task.id);
+      expect(retrieved).toBeTruthy();
+      expect(retrieved!.status.state).toBe(TaskState.COMPLETED);
+    }
+  });
+
+  it('cancels a task', async () => {
+    const mockAgent = { chatSync: vi.fn() } as any;
+    const handler = new XiaobaiAgentHandler(mockAgent);
+
+    const cancelled = await handler.onCancelTask('nonexistent');
+    expect(cancelled).toBeNull();
+
+    // Create a task then cancel it
+    mockAgent.chatSync.mockResolvedValue('ok');
+    const message: A2AMessage = {
+      messageId: 'm5',
+      role: Role.USER,
+      parts: [{ text: 'test' }],
+    };
+    const response = await handler.onMessage(message);
+    if ('task' in response) {
+      const cancelledTask = await handler.onCancelTask(response.task.id);
+      expect(cancelledTask).toBeTruthy();
+      expect(cancelledTask!.status.state).toBe(TaskState.CANCELED);
+    }
+  });
+
+  it('works as A2AServer handler', async () => {
+    const mockAgent = {
+      chatSync: vi.fn().mockResolvedValue('Response from agent'),
+    } as any;
+
+    const port = getTestPort();
+    const agentHandler = new XiaobaiAgentHandler(mockAgent);
+    a2aServer = new A2AServer({ port, handler: agentHandler });
+    await a2aServer.start();
+
+    const response = await fetch(`http://localhost:${port}/message/send`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message: { messageId: 'm1', role: 'user', parts: [{ text: 'Hello agent' }] },
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.task.status.state).toBe(TaskState.COMPLETED);
+    expect(body.task.history[1].parts[0].text).toBe('Response from agent');
   });
 });

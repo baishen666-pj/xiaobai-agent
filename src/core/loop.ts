@@ -38,6 +38,7 @@ export interface LoopOptions {
   permissionCallback?: (tool: string, args: Record<string, unknown>) => Promise<boolean>;
   stream?: boolean;
   tokenTracker?: TokenTracker;
+  systemPromptOverride?: string;
 }
 
 export class AgentLoop {
@@ -145,7 +146,7 @@ export class AgentLoop {
         await this.hooks.emit('pre_turn', { state, sessionId });
         state.turn++;
 
-        const systemPrompt = await this.buildSystemPrompt(sessionId);
+        const systemPrompt = await this.buildSystemPrompt(sessionId, options.systemPromptOverride);
 
         if (useStream) {
           yield* this.processStreamTurn(state, systemPrompt, options, currentProvider, currentModel);
@@ -413,7 +414,9 @@ export class AgentLoop {
     return results;
   }
 
-  private async buildSystemPrompt(sessionId: string): Promise<string> {
+  private async buildSystemPrompt(sessionId: string, override?: string): Promise<string> {
+    if (override) return override;
+
     const parts: string[] = [];
     parts.push('You are Xiaobai, a helpful AI coding assistant.');
 

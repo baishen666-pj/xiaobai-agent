@@ -59,7 +59,14 @@ export class SessionManager {
     const path = this.getSessionPath(sessionId);
     try {
       const raw = await readFile(path, 'utf-8');
-      return JSON.parse(raw) as Message[];
+      const parsed = JSON.parse(raw);
+      if (this.isSessionState(parsed)) {
+        return (parsed as SessionState).messages;
+      }
+      if (Array.isArray(parsed)) {
+        return parsed as Message[];
+      }
+      return [];
     } catch {
       return [];
     }

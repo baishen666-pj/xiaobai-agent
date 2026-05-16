@@ -24,7 +24,7 @@ describe('A2A Server + Client', () => {
     const card = await client.discover();
 
     expect(card.name).toBe('xiaobai-agent');
-    expect(card.version).toBe('0.3.0');
+    expect(card.version).toBe('0.5.0');
     expect(card.skills.length).toBeGreaterThan(0);
   });
 

@@ -6,7 +6,7 @@ import { HookSystem } from '../hooks/system.js';
 import { ConfigManager } from '../config/manager.js';
 import { MemorySystem } from '../memory/system.js';
 import { SecurityManager } from '../security/manager.js';
-import { MCPSession } from '../mcp/session.js';
+import { MCPSession, createMCPTools } from '../mcp/session.js';
 import { SandboxManager } from '../sandbox/manager.js';
 import { SkillSystem } from '../skills/system.js';
 import type { PluginManager } from '../plugins/manager.js';
@@ -141,9 +141,23 @@ export class XiaobaiAgent {
     const tools = new ToolRegistry();
 
     const builtInTools = await import('../tools/builtin.js');
-    tools.registerBatch(builtInTools.getBuiltinTools({ security, config, memory, sandbox }));
+    tools.registerBatch(builtInTools.getBuiltinTools({ security, config, memory, sandbox, tools }));
 
     const mcp = new MCPSession(config.getConfigDir());
+
+    // Auto-discover and register MCP tools (non-fatal)
+    try {
+      const mcpTools = await mcp.discoverTools();
+      for (const [serverName, toolDefs] of mcpTools) {
+        const mcpToolInstances = createMCPTools(serverName, toolDefs, mcp);
+        for (const tool of mcpToolInstances) {
+          tools.registerMcpTool(serverName, tool);
+        }
+      }
+    } catch {
+      // MCP discovery failure is non-fatal
+    }
+
     const skills = new SkillSystem(config.getConfigDir());
     if (cfg.skills.enabled) {
       await skills.loadAll();

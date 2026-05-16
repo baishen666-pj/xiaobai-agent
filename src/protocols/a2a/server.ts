@@ -6,11 +6,9 @@ import type {
   A2AMessage,
   SendMessageRequest,
   SendMessageResponse,
-  TaskState,
-  Role,
-  Part,
 } from './types.js';
-import { TaskState as TS, Role as R } from './types.js';
+import { TaskState as TS, Role } from './types.js';
+import type { XiaobaiAgent } from '../../core/agent.js';
 
 export interface A2AServerHandler {
   onMessage(message: A2AMessage, config?: SendMessageRequest['configuration']): Promise<SendMessageResponse>;
@@ -28,7 +26,7 @@ function buildDefaultAgentCard(): AgentCard {
   return {
     name: 'xiaobai-agent',
     description: 'Fusion AI agent with multi-agent orchestration, 18+ LLM providers, and MCP integration',
-    version: '0.3.0',
+    version: '0.5.0',
     capabilities: { streaming: true, pushNotifications: false },
     defaultInputModes: ['text/plain'],
     defaultOutputModes: ['text/plain'],
@@ -154,4 +152,85 @@ class DefaultHandler implements A2AServerHandler {
 
   async onGetTask(): Promise<A2ATask | null> { return null; }
   async onCancelTask(): Promise<A2ATask | null> { return null; }
+}
+
+export class XiaobaiAgentHandler implements A2AServerHandler {
+  private agent: XiaobaiAgent;
+  private tasks = new Map<string, A2ATask>();
+  private cancelledTasks = new Set<string>();
+
+  constructor(agent: XiaobaiAgent) {
+    this.agent = agent;
+  }
+
+  async onMessage(message: A2AMessage): Promise<SendMessageResponse> {
+    const taskId = randomUUID();
+
+    const text = message.parts
+      .map((p) => p.text ?? '')
+      .filter(Boolean)
+      .join('\n');
+
+    if (!text.trim()) {
+      const task: A2ATask = {
+        id: taskId,
+        status: { state: TS.FAILED, timestamp: new Date().toISOString() },
+        history: [message],
+      };
+      this.tasks.set(taskId, task);
+      return { task };
+    }
+
+    const workingTask: A2ATask = {
+      id: taskId,
+      status: { state: TS.WORKING, timestamp: new Date().toISOString() },
+      history: [message],
+    };
+    this.tasks.set(taskId, workingTask);
+
+    try {
+      const output = await this.agent.chatSync(text);
+
+      if (this.cancelledTasks.has(taskId)) {
+        workingTask.status = { state: TS.CANCELED, timestamp: new Date().toISOString() };
+        this.cancelledTasks.delete(taskId);
+        return { task: workingTask };
+      }
+
+      workingTask.status = { state: TS.COMPLETED, timestamp: new Date().toISOString() };
+      workingTask.history = [
+        message,
+        {
+          messageId: randomUUID(),
+          role: Role.AGENT,
+          parts: [{ text: output }],
+        },
+      ];
+    } catch (error) {
+      workingTask.status = {
+        state: TS.FAILED,
+        timestamp: new Date().toISOString(),
+        message: {
+          messageId: randomUUID(),
+          role: Role.AGENT,
+          parts: [{ text: `Error: ${(error as Error).message}` }],
+        },
+      };
+    }
+
+    return { task: workingTask };
+  }
+
+  async onGetTask(taskId: string): Promise<A2ATask | null> {
+    return this.tasks.get(taskId) ?? null;
+  }
+
+  async onCancelTask(taskId: string): Promise<A2ATask | null> {
+    const task = this.tasks.get(taskId);
+    if (!task) return null;
+
+    this.cancelledTasks.add(taskId);
+    task.status = { state: TS.CANCELED, timestamp: new Date().toISOString() };
+    return task;
+  }
 }

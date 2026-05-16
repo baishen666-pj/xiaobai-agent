@@ -142,6 +142,38 @@ export class MCPSession {
     return toolMap;
   }
 
+  async discoverResources(): Promise<Map<string, import('./resources.js').MCPResource[]>> {
+    const resourceMap = new Map<string, import('./resources.js').MCPResource[]>();
+    for (const [name, conn] of this.connections) {
+      if (!conn.isAlive()) continue;
+      const resources = await conn.listResources();
+      if (resources.length > 0) resourceMap.set(name, resources);
+    }
+    return resourceMap;
+  }
+
+  async readResource(serverName: string, uri: string): Promise<import('./resources.js').MCPResourceContent[]> {
+    const conn = this.connections.get(serverName);
+    if (!conn?.isAlive()) return [];
+    return conn.readResource(uri);
+  }
+
+  async discoverPrompts(): Promise<Map<string, import('./prompts.js').MCPPrompt[]>> {
+    const promptMap = new Map<string, import('./prompts.js').MCPPrompt[]>();
+    for (const [name, conn] of this.connections) {
+      if (!conn.isAlive()) continue;
+      const prompts = await conn.listPrompts();
+      if (prompts.length > 0) promptMap.set(name, prompts);
+    }
+    return promptMap;
+  }
+
+  async getPrompt(serverName: string, name: string, args?: Record<string, string>): Promise<import('./prompts.js').MCPPromptMessage[]> {
+    const conn = this.connections.get(serverName);
+    if (!conn?.isAlive()) return [];
+    return conn.getPrompt(name, args);
+  }
+
   // ── Deferred tool loading (from Claude Code pattern) ──
   // Only load tool names initially; full schemas fetched on demand.
 
@@ -332,6 +364,38 @@ export class MCPConnection {
     return this.sendRequest('tools/call', { name, arguments: args });
   }
 
+  async listResources(): Promise<import('./resources.js').MCPResource[]> {
+    try {
+      const caps = this.capabilities as Record<string, unknown>;
+      if (!caps?.resources) return [];
+      const result = await this.sendRequest('resources/list', {}) as { resources?: import('./resources.js').MCPResource[] };
+      return result.resources ?? [];
+    } catch {
+      return [];
+    }
+  }
+
+  async readResource(uri: string): Promise<import('./resources.js').MCPResourceContent[]> {
+    const result = await this.sendRequest('resources/read', { uri }) as { contents?: import('./resources.js').MCPResourceContent[] };
+    return result.contents ?? [];
+  }
+
+  async listPrompts(): Promise<import('./prompts.js').MCPPrompt[]> {
+    try {
+      const caps = this.capabilities as Record<string, unknown>;
+      if (!caps?.prompts) return [];
+      const result = await this.sendRequest('prompts/list', {}) as { prompts?: import('./prompts.js').MCPPrompt[] };
+      return result.prompts ?? [];
+    } catch {
+      return [];
+    }
+  }
+
+  async getPrompt(name: string, args?: Record<string, string>): Promise<import('./prompts.js').MCPPromptMessage[]> {
+    const result = await this.sendRequest('prompts/get', { name, arguments: args ?? {} }) as { messages?: import('./prompts.js').MCPPromptMessage[] };
+    return result.messages ?? [];
+  }
+
   protected sendRequest(method: string, params: Record<string, unknown>): Promise<unknown> {
     return new Promise((resolve, reject) => {
       const id = ++this.requestId;
@@ -403,8 +467,11 @@ export class MCPConnection {
 
 class MCPSSEConnection extends MCPConnection {
   private sseUrl: string;
+  private messageEndpoint: string | null = null;
   private abortController: AbortController | null = null;
   private aliveFlag = false;
+  private endpointReady: (() => void) | null = null;
+  private endpointPromise = new Promise<void>((resolve) => { this.endpointReady = resolve; });
 
   constructor(config: MCPServerConfig) {
     super(config);
@@ -430,6 +497,7 @@ class MCPSSEConnection extends MCPConnection {
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
+      let currentEvent = '';
 
       const processStream = async (): Promise<void> => {
         try {
@@ -442,15 +510,26 @@ class MCPSSEConnection extends MCPConnection {
             buffer = lines.pop() ?? '';
 
             for (const line of lines) {
-              if (line.startsWith('data: ')) {
+              if (line.startsWith('event: ')) {
+                currentEvent = line.slice(7).trim();
+              } else if (line.startsWith('data: ')) {
                 const data = line.slice(6).trim();
                 if (!data) continue;
-                try {
-                  const response = JSON.parse(data) as JsonRpcResponse;
-                  this.handleSSEMessage(response);
-                } catch {
-                  // Non-JSON data line, skip
+
+                if (currentEvent === 'endpoint') {
+                  this.messageEndpoint = data;
+                  this.endpointReady?.();
+                } else {
+                  try {
+                    const jsonRpcResponse = JSON.parse(data) as JsonRpcResponse;
+                    this.handleSSEMessage(jsonRpcResponse);
+                  } catch {
+                    // Non-JSON data line, skip
+                  }
                 }
+                currentEvent = '';
+              } else if (line.trim() === '') {
+                currentEvent = '';
               }
             }
           }
@@ -482,6 +561,58 @@ class MCPSSEConnection extends MCPConnection {
     return this.aliveFlag;
   }
 
+  protected override sendRequest(method: string, params: Record<string, unknown>): Promise<unknown> {
+    return new Promise((resolve, reject) => {
+      const id = ++this.requestId;
+
+      if (this.pending.size >= MAX_PENDING_REQUESTS) {
+        reject(new Error(`Too many pending requests (${this.pending.size})`));
+        return;
+      }
+
+      const request: JsonRpcRequest = { jsonrpc: '2.0', id, method, params };
+      const timer = setTimeout(() => {
+        if (this.pending.has(id)) {
+          this.pending.delete(id);
+          reject(new Error(`Request timeout: ${method}`));
+        }
+      }, 30000);
+
+      this.pending.set(id, { resolve, reject, timer });
+
+      // Wait for endpoint, then POST
+      this.endpointPromise.then(() => {
+        if (!this.messageEndpoint) {
+          clearTimeout(timer);
+          this.pending.delete(id);
+          reject(new Error('No SSE message endpoint available'));
+          return;
+        }
+        fetch(this.messageEndpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(request),
+        }).catch((err) => {
+          clearTimeout(timer);
+          this.pending.delete(id);
+          reject(err);
+        });
+      });
+    });
+  }
+
+  protected override async sendNotification(method: string, params: Record<string, unknown>): Promise<void> {
+    await this.endpointPromise;
+    if (!this.messageEndpoint) return;
+
+    const notification = { jsonrpc: '2.0', method, params };
+    await fetch(this.messageEndpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(notification),
+    });
+  }
+
   private handleSSEMessage(response: JsonRpcResponse): void {
     const handler = this.pending.get(response.id);
     if (handler) {
@@ -499,9 +630,9 @@ class MCPSSEConnection extends MCPConnection {
     const initResult = await this.sendRequest('initialize', {
       protocolVersion: '2024-11-05',
       capabilities: {},
-      clientInfo: { name: 'xiaobai', version: '0.3.0' },
+      clientInfo: { name: 'xiaobai', version: '0.4.0' },
     });
-    void initResult;
+    this.capabilities = (initResult as Record<string, unknown>)?.capabilities as Record<string, unknown> ?? {};
     await this.sendNotification('notifications/initialized', {});
   }
 }

@@ -259,6 +259,7 @@ export class Orchestrator {
           {
             maxTurns: handle.role.maxTurns,
             abortSignal: options.abortSignal,
+            systemPromptOverride: handle.role.systemPrompt,
             onEvent: (loopEvent) => {
               this.emit({ type: 'task_progress', task, event: loopEvent });
             },

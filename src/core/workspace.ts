@@ -118,4 +118,46 @@ export class Workspace {
   getBaseDir(): string {
     return this.baseDir;
   }
+
+  async save(): Promise<void> {
+    const state = {
+      store: Array.from(this.store.entries()).map(([key, entry]) => [key, entry]),
+      files: Array.from(this.files.entries()).map(([path, file]) => [path, file]),
+      savedAt: new Date().toISOString(),
+    };
+
+    const statePath = join(this.baseDir, 'workspace-state.json');
+    await mkdir(this.baseDir, { recursive: true });
+    await writeFile(statePath, JSON.stringify(state, null, 2), 'utf-8');
+  }
+
+  async load(): Promise<boolean> {
+    const statePath = join(this.baseDir, 'workspace-state.json');
+    try {
+      const raw = await readFile(statePath, 'utf-8');
+      const state = JSON.parse(raw) as {
+        store?: Array<[string, WorkspaceEntry]>;
+        files?: Array<[string, WorkspaceFile]>;
+      };
+
+      this.store.clear();
+      this.files.clear();
+
+      if (state.store) {
+        for (const [key, entry] of state.store) {
+          this.store.set(key, entry);
+        }
+      }
+
+      if (state.files) {
+        for (const [path, file] of state.files) {
+          this.files.set(path, file);
+        }
+      }
+
+      return true;
+    } catch {
+      return false;
+    }
+  }
 }

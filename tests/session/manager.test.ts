@@ -241,6 +241,29 @@ describe('SessionManager', () => {
     expect(sessions[0].messageCount).toBe(0);
   });
 
+  it('loadMessages reads messages after saveSessionState changes format', async () => {
+    const sm = new SessionManager(tempDir);
+    const id = sm.createSession();
+
+    // Simulate what AgentLoop does: save full state after a turn
+    await sm.saveSessionState(id, {
+      sessionId: id,
+      messages: [
+        { role: 'user', content: 'Hello' },
+        { role: 'assistant', content: 'Hi there!' },
+      ],
+      turn: 1,
+      totalTokens: 42,
+      lastCompactTokens: 0,
+    });
+
+    // loadMessages should extract the messages array from SessionState format
+    const messages = await sm.loadMessages(id);
+    expect(messages).toHaveLength(2);
+    expect(messages[0].content).toBe('Hello');
+    expect(messages[1].content).toBe('Hi there!');
+  });
+
   it('saveSessionState rejects invalid session ID', async () => {
     const sm = new SessionManager(tempDir);
     await expect(sm.saveSessionState('nonexistent', { turn: 1 })).rejects.toThrow('Invalid session ID');

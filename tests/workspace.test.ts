@@ -112,4 +112,77 @@ describe('Workspace', () => {
     expect(entries).toHaveLength(1);
     expect(entries[0].updatedBy).toBe('a2');
   });
+
+  describe('persistence', () => {
+    it('saves and loads state', async () => {
+      const ws = new Workspace(testDir);
+      await ws.init();
+      ws.set('result:task1', { output: 'hello' }, 'agent_1');
+      ws.set('config:mode', 'fast', 'agent_2');
+
+      await ws.save();
+
+      const ws2 = new Workspace(testDir);
+      const loaded = await ws2.load();
+
+      expect(loaded).toBe(true);
+      expect(ws2.get('result:task1')).toEqual({ output: 'hello' });
+      expect(ws2.get('config:mode')).toBe('fast');
+      expect(ws2.entries()).toHaveLength(2);
+    });
+
+    it('preserves file entries across save/load', async () => {
+      const ws = new Workspace(testDir);
+      await ws.init();
+      ws.set('key', 'value', 'agent_1');
+      await ws.writeFile('notes.txt', 'remember this', 'agent_1');
+
+      await ws.save();
+
+      const ws2 = new Workspace(testDir);
+      await ws2.load();
+
+      expect(ws2.get('key')).toBe('value');
+      expect(ws2.getFileEntries()).toHaveLength(1);
+      expect(ws2.getFileEntries()[0].content).toBe('remember this');
+    });
+
+    it('returns false when no saved state exists', async () => {
+      const ws = new Workspace(testDir);
+      const loaded = await ws.load();
+      expect(loaded).toBe(false);
+    });
+
+    it('overwrites previous save', async () => {
+      const ws = new Workspace(testDir);
+      await ws.init();
+
+      ws.set('key', 'v1', 'a1');
+      await ws.save();
+
+      ws.set('key', 'v2', 'a2');
+      ws.set('extra', 'data', 'a3');
+      await ws.save();
+
+      const ws2 = new Workspace(testDir);
+      await ws2.load();
+
+      expect(ws2.get('key')).toBe('v2');
+      expect(ws2.get('extra')).toBe('data');
+    });
+
+    it('clears existing data before loading', async () => {
+      const ws = new Workspace(testDir);
+      await ws.init();
+      ws.set('saved', 'yes', 'a1');
+      await ws.save();
+
+      const ws2 = new Workspace(testDir);
+      ws2.set('stale', 'no', 'a0');
+      await ws2.load();
+
+      expect(ws2.get('stale')).toBeUndefined();
+      expect(ws2.get('saved')).toBe('yes');
+    });
+  });
 });
