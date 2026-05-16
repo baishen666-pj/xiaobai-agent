@@ -21,6 +21,9 @@ export { TokenTracker, type TokenUsageRecord, type TokenUsageSummary } from './c
 export { fetchTool, searchTool, scrapeTool } from './tools/web.js';
 export { astEditTool } from './tools/ast-edit.js';
 export { CodeIndexer, codeIndexTool, type SymbolDef, type SymbolRef, type CodeIndex, type IndexQuery, type IndexResult } from './tools/code-index.js';
+export { StructuredLogger, BoundLogger, type LogLevel, type LogEntry, type LoggerConfig } from './core/logger.js';
+export { RuntimeMetrics, type MetricSample, type MetricSummary, type MetricsSnapshot } from './core/metrics.js';
+export { exportToJson, exportToMarkdown, type ExportData, type ExportFormat } from './core/export.js';
 export { Workspace, type WorkspaceEntry } from './core/workspace.js';
 export { DashboardServer, type DashboardServerOptions } from './server/index.js';
 export { EventBridge } from './server/eventBridge.js';

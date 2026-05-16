@@ -274,5 +274,7 @@ export function printHelp(): void {
   console.log('  /model                   - Show current provider/model');
   console.log('  /model <provider>        - Switch provider');
   console.log('  /model <p> <model>       - Switch provider and model');
+  console.log('  /export [format]         - Export session (json or markdown)');
+  console.log('  /metrics                 - Show runtime metrics');
   console.log('  /help                    - Show this help\n');
 }

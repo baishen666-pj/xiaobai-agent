@@ -6,6 +6,9 @@ import { XiaobaiAgent } from '../core/agent.js';
 import { Orchestrator } from '../core/orchestrator.js';
 import { PricingTable } from '../core/pricing.js';
 import { TokenTracker } from '../core/token-tracker.js';
+import { RuntimeMetrics } from '../core/metrics.js';
+import { StructuredLogger } from '../core/logger.js';
+import { exportToJson, exportToMarkdown } from '../core/export.js';
 import { DashboardServer } from '../server/index.js';
 import { SkillSystem } from '../skills/system.js';
 import { listRoles } from '../core/roles.js';
@@ -173,6 +176,55 @@ program
               agent.setModel(parts[1], parts[2]);
               console.log(chalk.green(`  Switched to ${parts[1]}/${parts[2]}\n`));
             }
+            prompt();
+            return;
+          }
+
+          if (trimmed.startsWith('/export')) {
+            const format = trimmed.split(/\s+/)[1] ?? 'markdown';
+            if (!sessionId) {
+              console.log(chalk.yellow('  No active session to export.\n'));
+              prompt();
+              return;
+            }
+            const state = await agent.getDeps().sessions.loadSessionState(sessionId);
+            if (!state) {
+              console.log(chalk.yellow('  Session state not found.\n'));
+              prompt();
+              return;
+            }
+            const tokenSummary = tokenTracker.getSummary();
+            const data = {
+              version: '0.4.0',
+              exportedAt: new Date().toISOString(),
+              session: {
+                id: sessionId,
+                messages: state.messages,
+                turnCount: turnCount,
+                startedAt: new Date(state.createdAt).toISOString(),
+                completedAt: new Date().toISOString(),
+              },
+              tokenUsage: tokenSummary.totalTokens > 0 ? tokenSummary : undefined,
+            };
+            if (format === 'json') {
+              console.log(exportToJson(data));
+            } else {
+              console.log(exportToMarkdown(data));
+            }
+            console.log();
+            prompt();
+            return;
+          }
+
+          if (trimmed === '/metrics') {
+            console.log(chalk.cyan('\n  Runtime Metrics:'));
+            console.log(chalk.gray(`    Turns: ${turnCount}`));
+            console.log(chalk.gray(`    Tokens: ${formatTokenUsage(totalTokens)}`));
+            const tokenSummary = tokenTracker.getSummary();
+            if (tokenSummary.totalTokens > 0) {
+              console.log(chalk.gray(`    Cost: ${formatCost(tokenSummary.totalCost)}`));
+            }
+            console.log();
             prompt();
             return;
           }
