@@ -55,7 +55,7 @@ export class ProviderRouter {
     this.providers.delete(name);
   }
 
-  private getProvider(providerName?: string): LLMProvider {
+  getProvider(providerName?: string): LLMProvider {
     const name = providerName ?? this.config.provider.default;
 
     const cached = this.providers.get(name);

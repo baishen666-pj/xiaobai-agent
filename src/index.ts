@@ -33,3 +33,6 @@ export { StructuredOutputAdapter, structuredChat, StructuredOutputError, type St
 export { zodToJsonSchema, extractJsonFromText } from './structured/schema.js';
 export { injectStructuredPrompt, extractStructuredOutput, buildStructuredErrorMessage } from './structured/extractor.js';
 export { getProviderCapability, resolveStructuredMode } from './structured/capabilities.js';
+export { ProviderHealthChecker, type HealthCheckResult, type HealthStatus, type HealthCheckConfig } from './provider/health.js';
+export { MarketplaceRegistry, type MarketplaceEntry, type MarketplaceSearchOptions, type MarketplaceInstallResult } from './plugins/registry.js';
+export { AutoCompleter, completeFilePath, generateCompletionScript, type CompletionCandidate, type CompletionContext } from './cli/autocomplete.js';

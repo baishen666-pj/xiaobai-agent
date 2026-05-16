@@ -276,5 +276,6 @@ export function printHelp(): void {
   console.log('  /model <p> <model>       - Switch provider and model');
   console.log('  /export [format]         - Export session (json or markdown)');
   console.log('  /metrics                 - Show runtime metrics');
+  console.log('  /health                  - Show provider health status');
   console.log('  /help                    - Show this help\n');
 }

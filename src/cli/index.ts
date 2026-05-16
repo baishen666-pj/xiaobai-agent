@@ -9,6 +9,7 @@ import { TokenTracker } from '../core/token-tracker.js';
 import { RuntimeMetrics } from '../core/metrics.js';
 import { StructuredLogger } from '../core/logger.js';
 import { exportToJson, exportToMarkdown } from '../core/export.js';
+import { ProviderHealthChecker } from '../provider/health.js';
 import { DashboardServer } from '../server/index.js';
 import { SkillSystem } from '../skills/system.js';
 import { listRoles } from '../core/roles.js';
@@ -223,6 +224,19 @@ program
             const tokenSummary = tokenTracker.getSummary();
             if (tokenSummary.totalTokens > 0) {
               console.log(chalk.gray(`    Cost: ${formatCost(tokenSummary.totalCost)}`));
+            }
+            console.log();
+            prompt();
+            return;
+          }
+
+          if (trimmed === '/health') {
+            const healthChecker = new ProviderHealthChecker(agent.getDeps().provider, agent.getDeps().config.get());
+            const results = await healthChecker.checkAll();
+            console.log(chalk.cyan('\n  Provider Health:'));
+            for (const r of results) {
+              const icon = r.status === 'healthy' ? chalk.green('✓') : r.status === 'degraded' ? chalk.yellow('⚠') : r.status === 'unhealthy' ? chalk.red('✗') : chalk.gray('?');
+              console.log(`    ${icon} ${r.provider}: ${r.status} (${r.latencyMs}ms)${r.error ? ` - ${r.error}` : ''}`);
             }
             console.log();
             prompt();
