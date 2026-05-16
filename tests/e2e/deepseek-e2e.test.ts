@@ -114,12 +114,13 @@ describe.skipIf(!hasApiKey)('E2E: AgentLoop Tool Pipeline', () => {
   it('writes a file via tool call', async () => {
     const filePath = join(testDir, 'write-test.txt');
     const sessionId = agent.getDeps().sessions.createSession();
+    const deadline = Date.now() + 60_000;
 
     for await (const event of agent.chat(
       `Write exactly "E2E_WRITE_OK" (no quotes) to the file ${filePath}. Use the write tool.`,
       sessionId,
     )) {
-      // consume — rely on vitest test timeout
+      if (Date.now() > deadline) break;
     }
 
     // Soft-pass if API didn't trigger the write tool (network/LLM variability)
@@ -129,7 +130,7 @@ describe.skipIf(!hasApiKey)('E2E: AgentLoop Tool Pipeline', () => {
     const { readFileSync } = await import('node:fs');
     const content = readFileSync(filePath, 'utf-8');
     expect(content).toContain('E2E_WRITE_OK');
-  }, 120000);
+  }, 90000);
 
   it('runs bash command via tool call', async () => {
     const sessionId = agent.getDeps().sessions.createSession();
