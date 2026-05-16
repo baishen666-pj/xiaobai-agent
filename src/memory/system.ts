@@ -1,5 +1,6 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
+import type { MemoryBackend } from './mem0-adapter.js';
 
 export type MemoryScope = 'session' | 'state' | 'long-term';
 
@@ -18,15 +19,21 @@ export class MemorySystem {
   private dirty = false;
   private memoryCharLimit: number;
   private userCharLimit: number;
+  private backend?: MemoryBackend;
+  private persistSessionEnabled: boolean;
 
-  constructor(configDir: string, memoryCharLimit = 2200, userCharLimit = 1375) {
+  constructor(configDir: string, memoryCharLimit = 2200, userCharLimit = 1375, backend?: MemoryBackend, persistSession = false) {
     this.memoryDir = join(configDir, 'memories');
     this.memoryCharLimit = memoryCharLimit;
     this.userCharLimit = userCharLimit;
+    this.backend = backend;
+    this.persistSessionEnabled = persistSession;
     if (!existsSync(this.memoryDir)) {
       mkdirSync(this.memoryDir, { recursive: true });
     }
-    this.load();
+    if (!backend) {
+      this.load();
+    }
   }
 
   private load(): void {
@@ -84,6 +91,14 @@ export class MemorySystem {
 
   add(scopeOrTarget: MemoryScope | 'memory' | 'user', content: string): { success: boolean; error?: string } {
     const scope = this.resolveScope(scopeOrTarget);
+
+    if (this.backend) {
+      const result = this.backend.add(scope, content);
+      return result instanceof Promise
+        ? { success: true }
+        : result;
+    }
+
     const entries = this.getEntries(scope);
     const limit = scope === 'state' ? this.userCharLimit : this.memoryCharLimit;
     const currentChars = entries.reduce((sum, e) => sum + e.content.length, 0);
@@ -105,6 +120,14 @@ export class MemorySystem {
 
   remove(scopeOrTarget: MemoryScope | 'memory' | 'user', oldText: string): { success: boolean; error?: string } {
     const scope = this.resolveScope(scopeOrTarget);
+
+    if (this.backend) {
+      const result = this.backend.remove(scope, oldText);
+      return result instanceof Promise
+        ? { success: true }
+        : result;
+    }
+
     const entries = this.getEntries(scope);
     const matches = entries.filter((e) => e.content.includes(oldText));
 
@@ -119,6 +142,14 @@ export class MemorySystem {
 
   replace(scopeOrTarget: MemoryScope | 'memory' | 'user', oldText: string, newContent: string): { success: boolean; error?: string } {
     const scope = this.resolveScope(scopeOrTarget);
+
+    if (this.backend) {
+      const result = this.backend.replace(scope, oldText, newContent);
+      return result instanceof Promise
+        ? { success: true }
+        : result;
+    }
+
     const entries = this.getEntries(scope);
     const matches = entries.filter((e) => e.content.includes(oldText));
 
@@ -133,6 +164,11 @@ export class MemorySystem {
   }
 
   list(scopeOrTarget: MemoryScope | 'memory' | 'user'): string[] {
+    if (this.backend) {
+      const result = this.backend.list(this.resolveScope(scopeOrTarget));
+      if (result instanceof Promise) return [];
+      return result;
+    }
     return this.getEntries(this.resolveScope(scopeOrTarget)).map((e) => e.content);
   }
 
@@ -157,6 +193,11 @@ export class MemorySystem {
         break;
       case 'long-term':
         this.saveFile('MEMORY.md', this.longTermEntries);
+        break;
+      case 'session':
+        if (this.persistSessionEnabled) {
+          this.saveFile('SESSION.md', this.sessionEntries);
+        }
         break;
     }
   }
@@ -186,9 +227,16 @@ export class MemorySystem {
   }
 
   async flushIfDirty(): Promise<void> {
+    if (this.backend) {
+      await this.backend.flush();
+      return;
+    }
     if (!this.dirty) return;
     this.saveFile('MEMORY.md', this.longTermEntries);
     this.saveFile('STATE.md', this.stateEntries);
+    if (this.persistSessionEnabled) {
+      this.saveFile('SESSION.md', this.sessionEntries);
+    }
     this.dirty = false;
   }
 
@@ -207,5 +255,8 @@ export class MemorySystem {
 
   clearSession(): void {
     this.sessionEntries = [];
+    if (this.persistSessionEnabled) {
+      this.saveFile('SESSION.md', this.sessionEntries);
+    }
   }
 }
