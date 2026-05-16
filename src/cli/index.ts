@@ -636,4 +636,6 @@ program
       }),
   );
 
-program.parse();
+export { program };
+
+if (!process.env.VITEST) program.parse();
