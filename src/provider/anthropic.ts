@@ -37,6 +37,7 @@ export class AnthropicProvider implements LLMProvider {
         description: t.description,
         input_schema: { ...t.parameters } as any,
       })),
+      ...(options.tool_choice ? { tool_choice: options.tool_choice as any } : {}),
     }, { signal: options.abortSignal });
 
     const textBlock = response.content.find((b) => b.type === 'text') as any;
@@ -72,6 +73,7 @@ export class AnthropicProvider implements LLMProvider {
         description: t.description,
         input_schema: { ...t.parameters } as any,
       })),
+      ...(options.tool_choice ? { tool_choice: options.tool_choice as any } : {}),
     }, { signal: options.abortSignal });
 
     let currentToolId = '';

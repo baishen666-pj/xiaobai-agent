@@ -19,3 +19,7 @@ export { DashboardServer, type DashboardServerOptions } from './server/index.js'
 export { EventBridge } from './server/eventBridge.js';
 export { PluginManager } from './plugins/manager.js';
 export type { Plugin, PluginManifest, PluginAPI, PluginState, PluginError, PluginInfo, PluginPermission } from './plugins/types.js';
+export { StructuredOutputAdapter, structuredChat, StructuredOutputError, type StructuredMode, type StructuredOutputConfig, type StructuredOutputResult } from './structured/index.js';
+export { zodToJsonSchema, extractJsonFromText } from './structured/schema.js';
+export { injectStructuredPrompt, extractStructuredOutput, buildStructuredErrorMessage } from './structured/extractor.js';
+export { getProviderCapability, resolveStructuredMode } from './structured/capabilities.js';

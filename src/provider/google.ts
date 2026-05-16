@@ -152,6 +152,15 @@ export class GoogleProvider implements LLMProvider {
       maxOutputTokens: options.maxTokens ?? 8192,
       temperature: options.temperature,
     };
+    if (options.structured) {
+      body.generationConfig.responseMimeType = 'application/json';
+    }
+    if (options.response_format) {
+      const rf = options.response_format as any;
+      if (rf.json_schema?.schema) {
+        body.generationConfig.responseSchema = rf.json_schema.schema;
+      }
+    }
     if (options.tools?.length) {
       body.tools = [{
         functionDeclarations: options.tools.map((t) => ({

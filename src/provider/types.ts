@@ -1,5 +1,6 @@
 import type { Message } from '../session/manager.js';
 import type { ToolDefinition } from '../tools/registry.js';
+import type { StructuredOutputConfig } from '../structured/types.js';
 
 export interface ProviderResponse {
   content?: string;
@@ -33,6 +34,11 @@ export interface ChatOptions {
   temperature?: number;
   stream?: boolean;
   abortSignal?: AbortSignal;
+  structured?: StructuredOutputConfig;
+  /** @internal Used by structured output adapter */
+  response_format?: Record<string, unknown>;
+  /** @internal Used by structured output adapter */
+  tool_choice?: Record<string, unknown>;
 }
 
 export interface ProviderConfig {

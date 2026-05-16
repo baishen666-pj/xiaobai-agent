@@ -32,6 +32,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
         type: 'function' as const,
         function: { name: t.name, description: t.description, parameters: t.parameters },
       })),
+      ...(options.response_format ? { response_format: options.response_format as any } : {}),
     }, { signal: options.abortSignal ?? undefined });
 
     const choice = response.choices[0];
@@ -62,6 +63,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
         type: 'function' as const,
         function: { name: t.name, description: t.description, parameters: t.parameters },
       })),
+      ...(options.response_format ? { response_format: options.response_format as any } : {}),
     }, { signal: options.abortSignal ?? undefined });
 
     const toolCallStates = new Map<number, { id: string; name: string; args: string }>();
