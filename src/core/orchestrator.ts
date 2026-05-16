@@ -12,10 +12,12 @@ import { Workspace } from './workspace.js';
 import { AgentLoop, type LoopEvent } from './loop.js';
 import { ToolRegistry } from '../tools/registry.js';
 import type { AgentEvent, SessionSource } from './submissions.js';
+import { generateTaskPlan, type TaskPlan } from './planner.js';
 import { join } from 'node:path';
 
 export type OrchestratorEvent =
   | { type: 'plan'; tasks: Task[] }
+  | { type: 'plan_generated'; plan: TaskPlan }
   | { type: 'task_started'; task: Task; agentId: string }
   | { type: 'task_progress'; task: Task; event: LoopEvent }
   | { type: 'task_completed'; task: Task; result: TaskResult }
@@ -115,6 +117,34 @@ export class Orchestrator {
 
   getResults(): TaskResult[] {
     return [...this.results];
+  }
+
+  async planAndExecute(goal: string, options: OrchestratorOptions = {}): Promise<TaskResult[]> {
+    this.tasks = [];
+    this.results = [];
+    this.completedIds.clear();
+
+    const chatFn = (messages: any, opts: any) =>
+      this.deps.provider.chat(messages, opts);
+
+    const plan = await generateTaskPlan(chatFn, goal);
+    this.emit({ type: 'plan_generated', plan });
+
+    const idMapping = new Map<string, string>();
+    for (const planned of plan.tasks) {
+      const task = this.addTask({
+        description: planned.description,
+        role: planned.role,
+        input: planned.input,
+        priority: planned.priority,
+        dependencies: planned.dependencies
+          .map((depId) => idMapping.get(depId))
+          .filter((d): d is string => d !== undefined),
+      });
+      idMapping.set(planned.id, task.id);
+    }
+
+    return this.execute(options);
   }
 
   async execute(options: OrchestratorOptions = {}): Promise<TaskResult[]> {
