@@ -101,33 +101,32 @@ export class CodeIndexer {
 
   query(q: IndexQuery): IndexResult {
     const limit = q.limit ?? 50;
-    let matches: Array<SymbolDef | SymbolRef[]> = [];
+    const matches: Array<SymbolDef | SymbolRef> = [];
 
     switch (q.type) {
       case 'symbol':
-        matches = this.querySymbol(q.name!, q.kind, limit);
+        matches.push(...this.querySymbol(q.name!, q.kind, limit));
         break;
       case 'references':
-        matches = this.queryReferences(q.name!, limit);
+        matches.push(...this.queryReferences(q.name!, limit));
         break;
       case 'callers':
-        matches = this.queryCallers(q.name!, limit);
+        matches.push(...this.queryCallers(q.name!, limit));
         break;
       case 'callees':
-        matches = this.queryCallees(q.filePath!, limit);
+        matches.push(...this.queryCallees(q.filePath!, limit));
         break;
       case 'search':
-        matches = this.searchSymbols(q.pattern!, q.kind, limit);
+        matches.push(...this.searchSymbols(q.pattern!, q.kind, limit));
         break;
       case 'outline':
-        matches = this.fileOutline(q.filePath!, limit);
+        matches.push(...this.fileOutline(q.filePath!, limit));
         break;
     }
 
-    const flat = matches.flat();
     return {
-      matches: flat.slice(0, limit),
-      total: flat.length,
+      matches: matches.slice(0, limit),
+      total: matches.length,
       query: q,
     };
   }

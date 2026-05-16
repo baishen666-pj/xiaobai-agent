@@ -47,10 +47,120 @@ export interface ChatMessage {
   timestamp: number;
 }
 
+// ── Typed WebSocket event data ──
+
 export interface OrchestratorWSMessage {
   type: string;
   [key: string]: unknown;
 }
+
+export interface WSTaskInfo {
+  id?: string;
+  description?: string;
+  role?: string;
+  status?: string;
+  priority?: string;
+  retries?: number;
+  maxRetries?: number;
+  dependencies?: string[];
+  parentTaskId?: string;
+}
+
+export interface WSAgentInfo {
+  id: string;
+  role: string;
+  busy: boolean;
+  currentTask?: string;
+  cost?: number;
+}
+
+interface PlanEventData extends OrchestratorWSMessage {
+  type: 'plan';
+  tasks: WSTaskInfo[];
+}
+
+interface TaskStartedEventData extends OrchestratorWSMessage {
+  type: 'task_started';
+  task: WSTaskInfo;
+  agentId: string;
+}
+
+interface TaskProgressEventData extends OrchestratorWSMessage {
+  type: 'task_progress';
+  task: WSTaskInfo;
+  event: { content?: string; [key: string]: unknown };
+}
+
+interface TaskCompletedEventData extends OrchestratorWSMessage {
+  type: 'task_completed';
+  task: WSTaskInfo;
+  result: { tokensUsed?: number; [key: string]: unknown };
+}
+
+interface TaskFailedEventData extends OrchestratorWSMessage {
+  type: 'task_failed';
+  task: WSTaskInfo;
+  error: string;
+}
+
+interface AgentStatusEventData extends OrchestratorWSMessage {
+  type: 'agent_status';
+  agents: WSAgentInfo[];
+}
+
+interface ChatStartEventData extends OrchestratorWSMessage {
+  type: 'chat_start';
+  sessionId: string;
+  prompt: string;
+  timestamp: number;
+}
+
+interface ChatTurnEventData extends OrchestratorWSMessage {
+  type: 'chat_turn';
+  sessionId: string;
+  content: string;
+  tokens: number;
+}
+
+interface ChatToolCallEventData extends OrchestratorWSMessage {
+  type: 'chat_tool_call';
+  sessionId: string;
+  toolName: string;
+}
+
+interface ChatToolResultEventData extends OrchestratorWSMessage {
+  type: 'chat_tool_result';
+  sessionId: string;
+  toolName: string;
+  output: string;
+  success: boolean;
+}
+
+interface ChatStopEventData extends OrchestratorWSMessage {
+  type: 'chat_stop';
+  reason: string;
+}
+
+interface ChatErrorEventData extends OrchestratorWSMessage {
+  type: 'chat_error';
+  sessionId: string;
+  error: string;
+}
+
+type TypedWSMessage =
+  | PlanEventData
+  | TaskStartedEventData
+  | TaskProgressEventData
+  | TaskCompletedEventData
+  | TaskFailedEventData
+  | AgentStatusEventData
+  | ChatStartEventData
+  | ChatTurnEventData
+  | ChatToolCallEventData
+  | ChatToolResultEventData
+  | ChatStopEventData
+  | ChatErrorEventData
+  | OrchestratorWSMessage;
 
 interface DashboardState {
   connected: boolean;
@@ -100,42 +210,46 @@ export function useWebSocket(url: string) {
   }, []);
 
   const handleMessage = useCallback(
-    (data: OrchestratorWSMessage) => {
+    (data: TypedWSMessage) => {
       switch (data.type) {
-        case 'plan':
-          setState((prev) => {
-            const tasks = (data.tasks as any[]).map((t) => ({
-              id: t.id,
-              description: t.description,
-              role: t.role,
-              status: t.status,
-              priority: t.priority,
-              retries: t.retries,
-              maxRetries: t.maxRetries,
-              dependencies: t.dependencies,
-              parentTaskId: t.parentTaskId,
-            }));
-            return { ...prev, tasks };
-          });
-          addEvent('plan', `Plan created with ${(data.tasks as any[]).length} tasks`);
+        case 'plan': {
+          const planData = data as PlanEventData;
+          const tasks = planData.tasks.map((t) => ({
+            id: t.id ?? '',
+            description: t.description ?? '',
+            role: t.role ?? '',
+            status: t.status ?? 'pending',
+            priority: t.priority,
+            retries: t.retries,
+            maxRetries: t.maxRetries,
+            dependencies: t.dependencies,
+            parentTaskId: t.parentTaskId,
+          }));
+          setState((prev) => ({ ...prev, tasks }));
+          addEvent('plan', `Plan created with ${planData.tasks.length} tasks`);
           break;
+        }
 
-        case 'task_started':
+        case 'task_started': {
+          const startedData = data as TaskStartedEventData;
+          const startedTask = startedData.task;
           setState((prev) => ({
             ...prev,
             tasks: prev.tasks.map((t) =>
-              t.id === (data.task as any)?.id
+              t.id === startedTask?.id
                 ? { ...t, status: 'running', startedAt: Date.now() }
                 : t,
             ),
-            agents: upsertAgent(prev.agents, data.agentId as string, (data.task as any)?.role ?? 'unknown', true, (data.task as any)?.id),
+            agents: upsertAgent(prev.agents, startedData.agentId as string, startedTask?.role ?? 'unknown', true, startedTask?.id),
           }));
-          addEvent('task_started', `Task started: ${(data.task as any)?.description?.slice(0, 60)}`);
+          addEvent('task_started', `Task started: ${startedTask?.description?.slice(0, 60) ?? ''}`);
           break;
+        }
 
         case 'task_progress': {
-          const taskId = (data.task as any)?.id;
-          const progressMsg = (data.event as any)?.content?.slice(0, 200);
+          const progressData = data as TaskProgressEventData;
+          const taskId = progressData.task?.id;
+          const progressMsg = progressData.event?.content?.slice(0, 200);
           if (taskId && progressMsg) {
             setState((prev) => ({
               ...prev,
@@ -149,52 +263,56 @@ export function useWebSocket(url: string) {
           break;
         }
 
-        case 'task_completed':
-          setState((prev) => {
-            const result = data.result as any;
-            const tokens = result?.tokensUsed ?? 0;
-            const task = data.task as any;
-            const role = task?.role ?? 'unknown';
-            return {
-              ...prev,
-              tasks: prev.tasks.map((t) =>
-                t.id === task?.id
-                  ? { ...t, status: 'completed', completedAt: Date.now(), tokensUsed: tokens }
-                  : t,
-              ),
-              tokenTotal: prev.tokenTotal + tokens,
-              tokenHistory: [...prev.tokenHistory.slice(-199), { timestamp: Date.now(), tokens, taskId: task?.id, role }],
-              agents: prev.agents.map((a) =>
-                a.currentTask === task?.id ? { ...a, busy: false, currentTask: undefined } : a
-              ),
-            };
-          });
-          addEvent('task_completed', `Task completed: ${(data.task as any)?.description?.slice(0, 60)}`);
-          break;
-
-        case 'task_failed':
+        case 'task_completed': {
+          const completedData = data as TaskCompletedEventData;
+          const completedResult = completedData.result;
+          const tokens = completedResult?.tokensUsed ?? 0;
+          const completedTask = completedData.task;
+          const role = completedTask?.role ?? 'unknown';
           setState((prev) => ({
             ...prev,
             tasks: prev.tasks.map((t) =>
-              t.id === (data.task as any)?.id
+              t.id === completedTask?.id
+                ? { ...t, status: 'completed', completedAt: Date.now(), tokensUsed: tokens }
+                : t,
+            ),
+            tokenTotal: prev.tokenTotal + tokens,
+            tokenHistory: [...prev.tokenHistory.slice(-199), { timestamp: Date.now(), tokens, taskId: completedTask?.id ?? '', role }],
+            agents: prev.agents.map((a) =>
+              a.currentTask === completedTask?.id ? { ...a, busy: false, currentTask: undefined } : a
+            ),
+          }));
+          addEvent('task_completed', `Task completed: ${completedTask?.description?.slice(0, 60) ?? ''}`);
+          break;
+        }
+
+        case 'task_failed': {
+          const failedData = data as TaskFailedEventData;
+          const failedTask = failedData.task;
+          setState((prev) => ({
+            ...prev,
+            tasks: prev.tasks.map((t) =>
+              t.id === failedTask?.id
                 ? { ...t, status: 'failed', completedAt: Date.now() }
                 : t,
             ),
             agents: prev.agents.map((a) =>
-              a.currentTask === (data.task as any)?.id ? { ...a, busy: false, currentTask: undefined } : a
+              a.currentTask === failedTask?.id ? { ...a, busy: false, currentTask: undefined } : a
             ),
           }));
-          addEvent('task_failed', `Task failed: ${data.error}`);
+          addEvent('task_failed', `Task failed: ${failedData.error}`);
           break;
+        }
 
         case 'all_completed':
           addEvent('all_completed', `All tasks completed`);
           break;
 
-        case 'agent_status':
+        case 'agent_status': {
+          const agentData = data as AgentStatusEventData;
           setState((prev) => ({
             ...prev,
-            agents: (data.agents as any[]).map((a) => ({
+            agents: agentData.agents.map((a) => ({
               id: a.id,
               role: a.role,
               busy: a.busy,
@@ -203,84 +321,95 @@ export function useWebSocket(url: string) {
             })),
           }));
           break;
+        }
 
         // Chat events
-        case 'chat_start':
+        case 'chat_start': {
+          const chatStartData = data as ChatStartEventData;
           setState((prev) => ({
             ...prev,
             chatMessages: [...prev.chatMessages.slice(-99), {
               id: `start_${Date.now()}_${++idCounterRef.current}`,
-              sessionId: data.sessionId as string,
+              sessionId: chatStartData.sessionId,
               type: 'user' as const,
-              content: (data.prompt as string)?.slice(0, 200),
-              timestamp: data.timestamp as number,
+              content: chatStartData.prompt?.slice(0, 200) ?? '',
+              timestamp: chatStartData.timestamp,
             }],
           }));
-          addEvent('chat_start', `Chat started: ${(data.prompt as string)?.slice(0, 60)}`);
+          addEvent('chat_start', `Chat started: ${chatStartData.prompt?.slice(0, 60) ?? ''}`);
           break;
+        }
 
-        case 'chat_turn':
+        case 'chat_turn': {
+          const chatTurnData = data as ChatTurnEventData;
           setState((prev) => ({
             ...prev,
             chatMessages: [...prev.chatMessages.slice(-99), {
               id: `turn_${Date.now()}_${++idCounterRef.current}`,
-              sessionId: data.sessionId as string,
+              sessionId: chatTurnData.sessionId,
               type: 'assistant' as const,
-              content: (data.content as string)?.slice(0, 500),
-              tokens: data.tokens as number,
+              content: chatTurnData.content?.slice(0, 500) ?? '',
+              tokens: chatTurnData.tokens,
               timestamp: Date.now(),
             }],
-            chatTokenTotal: prev.chatTokenTotal + (data.tokens as number ?? 0),
+            chatTokenTotal: prev.chatTokenTotal + (chatTurnData.tokens ?? 0),
           }));
           break;
+        }
 
-        case 'chat_tool_call':
+        case 'chat_tool_call': {
+          const toolCallData = data as ChatToolCallEventData;
           setState((prev) => ({
             ...prev,
             chatMessages: [...prev.chatMessages.slice(-99), {
               id: `tc_${Date.now()}_${++idCounterRef.current}`,
-              sessionId: data.sessionId as string,
+              sessionId: toolCallData.sessionId,
               type: 'tool_call' as const,
               content: '',
-              toolName: data.toolName as string,
+              toolName: toolCallData.toolName,
               timestamp: Date.now(),
             }],
           }));
-          addEvent('chat_tool_call', `Tool: ${data.toolName}`);
+          addEvent('chat_tool_call', `Tool: ${toolCallData.toolName}`);
           break;
+        }
 
-        case 'chat_tool_result':
+        case 'chat_tool_result': {
+          const toolResultData = data as ChatToolResultEventData;
           setState((prev) => ({
             ...prev,
             chatMessages: [...prev.chatMessages.slice(-99), {
               id: `tr_${Date.now()}_${++idCounterRef.current}`,
-              sessionId: data.sessionId as string,
+              sessionId: toolResultData.sessionId,
               type: 'tool_result' as const,
-              content: (data.output as string)?.slice(0, 200),
-              toolName: data.toolName as string,
-              success: data.success as boolean,
+              content: toolResultData.output?.slice(0, 200) ?? '',
+              toolName: toolResultData.toolName,
+              success: toolResultData.success,
               timestamp: Date.now(),
             }],
           }));
           break;
+        }
 
         case 'chat_stop':
-          addEvent('chat_stop', `Chat stopped: ${data.reason}`);
+          addEvent('chat_stop', `Chat stopped: ${(data as ChatStopEventData).reason}`);
           break;
 
-        case 'chat_error':
+        case 'chat_error': {
+          const chatErrorData = data as ChatErrorEventData;
           setState((prev) => ({
             ...prev,
             chatMessages: [...prev.chatMessages.slice(-99), {
               id: `err_${Date.now()}_${++idCounterRef.current}`,
-              sessionId: data.sessionId as string,
+              sessionId: chatErrorData.sessionId,
               type: 'error' as const,
-              content: data.error as string,
+              content: chatErrorData.error,
               timestamp: Date.now(),
             }],
           }));
-          addEvent('chat_error', `Error: ${data.error}`);
+          addEvent('chat_error', `Error: ${chatErrorData.error}`);
           break;
+        }
       }
     },
     [addEvent],
@@ -311,7 +440,7 @@ export function useWebSocket(url: string) {
 
     ws.onmessage = (e) => {
       try {
-        const data = JSON.parse(e.data) as OrchestratorWSMessage;
+        const data = JSON.parse(e.data) as TypedWSMessage;
         handleMessage(data);
       } catch (err) {
         addEvent('error', `Invalid message: ${err instanceof Error ? err.message : String(err)}`);

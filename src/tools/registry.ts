@@ -13,6 +13,7 @@ export interface ToolParameter {
   description: string;
   enum?: string[];
   default?: unknown;
+  properties?: Record<string, ToolParameter>;
 }
 
 export interface ToolResult {

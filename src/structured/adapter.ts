@@ -114,7 +114,7 @@ export class StructuredOutputAdapter {
     const usedMode = meta?.mode ?? 'prompt_based';
     const extracted = extractStructuredOutput<T>(response.content, meta?.config.schema as z.ZodType<T> ?? z.any());
     if (extracted.success) {
-      return { success: true, result: { ...extracted.result, mode: usedMode as any }, usedMode };
+      return { success: true, result: { ...extracted.result, mode: usedMode as Exclude<import('./types.js').StructuredMode, 'auto'> }, usedMode };
     }
     return { success: false, error: extracted.error, usedMode };
   }

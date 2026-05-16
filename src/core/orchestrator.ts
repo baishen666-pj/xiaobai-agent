@@ -14,6 +14,8 @@ import { ToolRegistry } from '../tools/registry.js';
 import type { AgentEvent, SessionSource } from './submissions.js';
 import { generateTaskPlan, type TaskPlan } from './planner.js';
 import { analyzeFailure, type ReflectionOutcome } from './reflection.js';
+import type { Message } from '../session/manager.js';
+import type { ChatOptions } from '../provider/types.js';
 import { join } from 'node:path';
 
 export type OrchestratorEvent =
@@ -126,7 +128,7 @@ export class Orchestrator {
     this.results = [];
     this.completedIds.clear();
 
-    const chatFn = (messages: any, opts: any) =>
+    const chatFn = (messages: Message[], opts: ChatOptions) =>
       this.deps.provider.chat(messages, opts);
 
     const plan = await generateTaskPlan(chatFn, goal);
@@ -310,7 +312,7 @@ export class Orchestrator {
     this.emit({ type: 'task_reflecting', task, error: errorMsg });
 
     try {
-      const chatFn = (messages: any, opts: any) => this.deps.provider.chat(messages, opts);
+      const chatFn = (messages: Message[], opts: ChatOptions) => this.deps.provider.chat(messages, opts);
       const reflection = await analyzeFailure(chatFn, task.description, errorMsg, output);
 
       if (reflection.strategy === 'give_up') {

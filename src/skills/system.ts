@@ -27,7 +27,7 @@ export interface SkillExecutionContext {
 }
 
 const SKILL_CATEGORIES = ['coding', 'analysis', 'writing', 'planning', 'review', 'devops', 'general'] as const;
-type SkillCategory = (typeof SKILL_CATEGORIES)[number];
+export type SkillCategory = (typeof SKILL_CATEGORIES)[number];
 
 const BUILTIN_SKILLS = [
   'code-review', 'test-gen', 'refactor', 'doc-writer',

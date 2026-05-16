@@ -1,6 +1,20 @@
 import type { Message } from '../session/manager.js';
 import type { ProviderConfig, ProviderResponse, StreamChunk, ChatOptions, LLMProvider } from './types.js';
 
+// ── Anthropic API response block types ──
+
+interface AnthropicToolUseBlock {
+  type: 'tool_use';
+  id: string;
+  name: string;
+  input: Record<string, unknown>;
+}
+
+interface AnthropicTextBlock {
+  type: 'text';
+  text: string;
+}
+
 export class AnthropicProvider implements LLMProvider {
   readonly name: string;
   private apiKey: string;
@@ -27,7 +41,9 @@ export class AnthropicProvider implements LLMProvider {
     const client = await this.getClient();
     const formatted = this.formatMessages(messages);
 
-    const response = await client.messages.create({
+    // The Anthropic SDK requires specific union types for messages and tools.
+    // Our internal types map closely but not exactly, so we cast at the SDK boundary.
+    const createParams = {
       model,
       max_tokens: options.maxTokens ?? 8192,
       system: options.system ?? '',
@@ -35,18 +51,23 @@ export class AnthropicProvider implements LLMProvider {
       tools: options.tools?.map((t) => ({
         name: t.name,
         description: t.description,
-        input_schema: { ...t.parameters } as any,
+        input_schema: { type: 'object' as const, properties: t.parameters as Record<string, unknown> },
       })),
-      ...(options.tool_choice ? { tool_choice: options.tool_choice as any } : {}),
-    }, { signal: options.abortSignal });
+      ...(options.tool_choice ? { tool_choice: options.tool_choice } : {}),
+    };
 
-    const textBlock = response.content.find((b) => b.type === 'text') as any;
-    const toolBlocks = response.content.filter((b) => b.type === 'tool_use') as any[];
+    const response = await client.messages.create(
+      createParams as Parameters<typeof client.messages.create>[0],
+      { signal: options.abortSignal },
+    ) as import('@anthropic-ai/sdk/resources/messages.js').Message;
+
+    const textBlock = response.content.find((b: { type: string }) => b.type === 'text') as AnthropicTextBlock | undefined;
+    const toolBlocks = response.content.filter((b: { type: string }) => b.type === 'tool_use') as AnthropicToolUseBlock[];
 
     return {
       content: textBlock?.text ?? undefined,
       toolCalls: toolBlocks.length > 0
-        ? toolBlocks.map((b: any) => ({ id: b.id ?? '', name: b.name ?? '', arguments: b.input ?? {} }))
+        ? toolBlocks.map((b) => ({ id: b.id ?? '', name: b.name ?? '', arguments: b.input ?? {} }))
         : undefined,
       usage: {
         promptTokens: response.usage.input_tokens,
@@ -63,7 +84,7 @@ export class AnthropicProvider implements LLMProvider {
 
     let inputTokens = 0;
 
-    const stream = client.messages.stream({
+    const streamParams = {
       model,
       max_tokens: options.maxTokens ?? 8192,
       system: options.system ?? '',
@@ -71,10 +92,15 @@ export class AnthropicProvider implements LLMProvider {
       tools: options.tools?.map((t) => ({
         name: t.name,
         description: t.description,
-        input_schema: { ...t.parameters } as any,
+        input_schema: { type: 'object' as const, properties: t.parameters as Record<string, unknown> },
       })),
-      ...(options.tool_choice ? { tool_choice: options.tool_choice as any } : {}),
-    }, { signal: options.abortSignal });
+      ...(options.tool_choice ? { tool_choice: options.tool_choice } : {}),
+    };
+
+    const stream = client.messages.stream(
+      streamParams as Parameters<typeof client.messages.stream>[0],
+      { signal: options.abortSignal },
+    );
 
     let currentToolId = '';
     let currentToolName = '';
@@ -111,20 +137,24 @@ export class AnthropicProvider implements LLMProvider {
   }
 
   private formatMessages(messages: Message[]) {
-    const formatted: Array<{ role: 'user' | 'assistant'; content: string | Array<any> }> = [];
+    type AnthropicToolResultContent = { type: 'tool_result'; tool_use_id: string; content: string };
+    type AnthropicContentBlock = AnthropicTextBlock | AnthropicToolUseBlock | AnthropicToolResultContent;
+    type AnthropicMessageContent = string | AnthropicContentBlock[];
+
+    const formatted: Array<{ role: 'user' | 'assistant'; content: AnthropicMessageContent }> = [];
     for (const m of messages) {
       if (m.role === 'system') continue;
       if (m.role === 'tool_result') {
         const last = formatted[formatted.length - 1];
         if (last?.role === 'assistant' && Array.isArray(last.content)) {
-          last.content.push({ type: 'tool_result', tool_use_id: m.toolCallId ?? '', content: m.content });
+          (last.content as AnthropicContentBlock[]).push({ type: 'tool_result', tool_use_id: m.toolCallId ?? '', content: m.content });
         } else {
           formatted.push({ role: 'user', content: [{ type: 'tool_result', tool_use_id: m.toolCallId ?? '', content: m.content }] });
         }
         continue;
       }
       if (m.role === 'assistant' && m.toolCalls?.length) {
-        const content: Array<any> = [];
+        const content: AnthropicContentBlock[] = [];
         if (m.content) {
           content.push({ type: 'text', text: m.content });
         }
@@ -136,6 +166,6 @@ export class AnthropicProvider implements LLMProvider {
       }
       formatted.push({ role: m.role as 'user' | 'assistant', content: m.content });
     }
-    return formatted as any;
+    return formatted;
   }
 }

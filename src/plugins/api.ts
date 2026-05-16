@@ -139,8 +139,8 @@ export class PluginAPIImpl implements PluginAPI {
     get: (): Record<string, unknown> => {
       try {
         this.checkPermission('config:read');
-        const cfg = this._configManager.get() as any;
-        const pluginConfig = cfg.plugins?.config ?? {};
+        const cfg = this._configManager.get();
+        const pluginConfig = (cfg.plugins?.config ?? {}) as Record<string, Record<string, unknown>>;
         return pluginConfig[this.pluginName] ?? {};
       } catch {
         return {};
@@ -150,10 +150,10 @@ export class PluginAPIImpl implements PluginAPI {
     set: (values: Record<string, unknown>): void => {
       try {
         this.checkPermission('config:write');
-        const cfg = this._configManager.get() as any;
-        const pluginConfig = cfg.plugins?.config ?? {};
+        const cfg = this._configManager.get();
+        const pluginConfig = (cfg.plugins?.config ?? {}) as Record<string, Record<string, unknown>>;
         pluginConfig[this.pluginName] = { ...(pluginConfig[this.pluginName] ?? {}), ...values };
-        this._configManager.save({ plugins: { ...cfg.plugins, config: pluginConfig } } as any);
+        this._configManager.save({ plugins: { ...cfg.plugins, config: pluginConfig } } as Partial<import('../config/manager.js').XiaobaiConfig>);
       } catch (err) {
         this._onError({
           pluginName: this.pluginName,

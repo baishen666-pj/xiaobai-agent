@@ -6,17 +6,24 @@ const LANGUAGES = [
   'diff', 'markdown', 'plaintext',
 ];
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let hljs: any = null;
+interface HljsInstance {
+  registerLanguage(name: string, lang: unknown): void;
+  getLanguage(name: string): unknown;
+  highlight(code: string, opts: { language: string }): { value: string };
+  highlightAuto(code: string): { value: string };
+}
+
+let hljs: HljsInstance | null = null;
 
 async function loadHljs(): Promise<void> {
   const coreModule = await import('highlight.js/lib/core');
-  hljs = coreModule.default ?? coreModule;
+  const instance = coreModule.default ?? coreModule;
+  hljs = instance as HljsInstance;
 
   const languageImports = LANGUAGES.map(async (lang) => {
     const langModule = await import(`highlight.js/lib/languages/${lang}`);
     const mod = langModule.default ?? langModule;
-    hljs.registerLanguage(lang, mod);
+    hljs!.registerLanguage(lang, mod);
   });
 
   await Promise.all(languageImports);
@@ -73,13 +80,14 @@ export function highlightCode(code: string, lang?: string): string {
   if (!hljs) return code;
 
   const resolvedLang = lang ? (LANG_ALIASES[lang] ?? lang) : undefined;
+  const instance = hljs;
 
   try {
     let highlighted: string;
-    if (resolvedLang && hljs.getLanguage(resolvedLang)) {
-      highlighted = hljs.highlight(code, { language: resolvedLang }).value;
+    if (resolvedLang && instance.getLanguage(resolvedLang)) {
+      highlighted = instance.highlight(code, { language: resolvedLang }).value;
     } else {
-      highlighted = hljs.highlightAuto(code).value;
+      highlighted = instance.highlightAuto(code).value;
     }
     return htmlToAnsi(highlighted);
   } catch {

@@ -1,6 +1,47 @@
 import type { Message } from '../session/manager.js';
 import type { ProviderConfig, ProviderResponse, StreamChunk, ChatOptions, LLMProvider } from './types.js';
 
+// ── Google Generative Language API types ──
+
+interface GoogleContentPart {
+  text?: string;
+  functionCall?: { name: string; args: Record<string, unknown> };
+  functionResponse?: { name: string; response: { output: string } };
+}
+
+interface GoogleContent {
+  role: 'user' | 'model' | 'function';
+  parts: GoogleContentPart[];
+}
+
+interface GoogleCandidate {
+  content?: { parts: GoogleContentPart[] };
+  finishReason?: string;
+}
+
+interface GoogleUsageMetadata {
+  promptTokenCount?: number;
+  candidatesTokenCount?: number;
+  totalTokenCount?: number;
+}
+
+interface GoogleGenerateResponse {
+  candidates?: GoogleCandidate[];
+  usageMetadata?: GoogleUsageMetadata;
+}
+
+interface GoogleRequestBody {
+  contents: GoogleContent[];
+  systemInstruction?: { parts: Array<{ text: string }> };
+  generationConfig: {
+    maxOutputTokens: number;
+    temperature?: number;
+    responseMimeType?: string;
+    responseSchema?: Record<string, unknown>;
+  };
+  tools?: Array<{ functionDeclarations: Array<{ name: string; description: string; parameters: Record<string, unknown> }> }>;
+}
+
 export class GoogleProvider implements LLMProvider {
   readonly name = 'google';
   private apiKey: string;
@@ -28,7 +69,7 @@ export class GoogleProvider implements LLMProvider {
       throw new Error(`Google API error: ${response.status}`);
     }
 
-    const data = await response.json() as any;
+    const data = await response.json() as GoogleGenerateResponse;
     return this.parseResponse(data);
   }
 
@@ -69,7 +110,7 @@ export class GoogleProvider implements LLMProvider {
         if (!jsonStr || jsonStr === '[DONE]') continue;
 
         try {
-          const chunk = JSON.parse(jsonStr) as any;
+          const chunk = JSON.parse(jsonStr) as GoogleGenerateResponse;
           const candidate = chunk.candidates?.[0];
           if (!candidate) continue;
 
@@ -103,8 +144,8 @@ export class GoogleProvider implements LLMProvider {
     }
   }
 
-  private buildRequestBody(messages: Message[], options: ChatOptions) {
-    const contents: any[] = [];
+  private buildRequestBody(messages: Message[], options: ChatOptions): GoogleRequestBody {
+    const contents: GoogleContent[] = [];
     const systemParts: string[] = [];
     const pendingToolResults = new Map<string, string>();
 
@@ -118,7 +159,7 @@ export class GoogleProvider implements LLMProvider {
         continue;
       }
       if (m.role === 'assistant' && m.toolCalls?.length) {
-        const parts: any[] = [];
+        const parts: GoogleContentPart[] = [];
         if (m.content) parts.push({ text: m.content });
         for (const tc of m.toolCalls) {
           parts.push({ functionCall: { name: tc.name, args: tc.arguments } });
@@ -144,22 +185,23 @@ export class GoogleProvider implements LLMProvider {
     }
 
     const combinedSystem = systemParts.join('\n\n');
-    const body: any = { contents };
-    if (options.system ?? combinedSystem) {
-      body.systemInstruction = { parts: [{ text: options.system ?? combinedSystem ?? '' }] };
-    }
-    body.generationConfig = {
+    const generationConfig: GoogleRequestBody['generationConfig'] = {
       maxOutputTokens: options.maxTokens ?? 8192,
       temperature: options.temperature,
     };
     if (options.structured) {
-      body.generationConfig.responseMimeType = 'application/json';
+      generationConfig.responseMimeType = 'application/json';
     }
     if (options.response_format) {
-      const rf = options.response_format as any;
-      if (rf.json_schema?.schema) {
-        body.generationConfig.responseSchema = rf.json_schema.schema;
+      const rf = options.response_format;
+      const jsonSchemaObj = rf.json_schema as Record<string, unknown> | undefined;
+      if (jsonSchemaObj?.schema) {
+        generationConfig.responseSchema = jsonSchemaObj.schema as Record<string, unknown>;
       }
+    }
+    const body: GoogleRequestBody = { contents, generationConfig };
+    if (options.system ?? combinedSystem) {
+      body.systemInstruction = { parts: [{ text: options.system ?? combinedSystem ?? '' }] };
     }
     if (options.tools?.length) {
       body.tools = [{
@@ -173,7 +215,7 @@ export class GoogleProvider implements LLMProvider {
     return body;
   }
 
-  private parseResponse(data: any): ProviderResponse {
+  private parseResponse(data: GoogleGenerateResponse): ProviderResponse {
     const candidate = data.candidates?.[0];
     if (!candidate) return { content: '' };
 

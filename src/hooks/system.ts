@@ -136,12 +136,13 @@ export class HookSystem {
       }
       return { exitCode: 'allow', message: result };
     } catch (error) {
-      const exitCode = (error as any)?.status;
+      const execError = error as Error & { status?: number; stderr?: Buffer | string };
+      const exitCode = execError.status;
       if (exitCode === 2) {
-        return BLOCK((error as any)?.stderr?.toString()?.trim() ?? 'Blocked by hook');
+        return BLOCK(typeof execError.stderr === 'string' ? execError.stderr.trim() : execError.stderr?.toString()?.trim() ?? 'Blocked by hook');
       }
       if (exitCode === 1) {
-        return WARN((error as any)?.stderr?.toString()?.trim() ?? 'Hook warning');
+        return WARN(typeof execError.stderr === 'string' ? execError.stderr.trim() : execError.stderr?.toString()?.trim() ?? 'Hook warning');
       }
       return { exitCode: 'allow', message: `Hook error: ${(error as Error).message}` };
     }

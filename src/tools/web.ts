@@ -6,13 +6,13 @@ const MAX_RESPONSE_SIZE = 5 * 1024 * 1024;
 const DEFAULT_TIMEOUT = 30_000;
 const IS_WIN = process.platform === 'win32';
 
-function truncate(output: string, max = MAX_WEB_OUTPUT): string {
+export function truncate(output: string, max = MAX_WEB_OUTPUT): string {
   if (output.length <= max) return output;
   const half = Math.floor(max / 2) - 20;
   return output.slice(0, half) + `\n\n... [truncated ${output.length - max} chars] ...\n\n` + output.slice(-half);
 }
 
-function stripHtml(html: string): string {
+export function stripHtml(html: string): string {
   let text = html;
 
   // Remove script and style blocks
@@ -38,7 +38,7 @@ function stripHtml(html: string): string {
   return text;
 }
 
-function extractMetadata(html: string): { title?: string; description?: string } {
+export function extractMetadata(html: string): { title?: string; description?: string } {
   const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
   const descMatch = html.match(/<meta[^>]*name=["']description["'][^>]*content=["']([\s\S]*?)["']/i);
 
@@ -55,7 +55,7 @@ const BLOCKED_HOSTS = new Set([
   '172.26.', '172.27.', '172.28.', '172.29.', '172.30.', '172.31.',
 ]);
 
-function isUrlSafe(url: string): boolean {
+export function isUrlSafe(url: string): boolean {
   try {
     const parsed = new URL(url);
     if (!['http:', 'https:'].includes(parsed.protocol)) return false;
@@ -387,7 +387,7 @@ export const scrapeTool: Tool = {
   },
 };
 
-function extractLinks(html: string): string {
+export function extractLinks(html: string): string {
   const linkRegex = /<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
   const links: Array<{ url: string; text: string }> = [];
   let match: RegExpExecArray | null;
@@ -403,7 +403,7 @@ function extractLinks(html: string): string {
   return links.map((l) => `${l.text}: ${l.url}`).join('\n');
 }
 
-function extractBySelector(html: string, selector: string): string {
+export function extractBySelector(html: string, selector: string): string {
   // Simple selector extraction: tag name, class, or id
   const tagMatch = selector.match(/^(\w+)$/);
   const classMatch = selector.match(/^\.([\w-]+)$/);
@@ -432,7 +432,7 @@ function extractBySelector(html: string, selector: string): string {
   return parts.join('\n\n');
 }
 
-function htmlToMarkdown(html: string, selector?: string): string {
+export function htmlToMarkdown(html: string, selector?: string): string {
   const source = selector ? extractBySelectorHtml(html, selector) : html;
   let md = source;
 
@@ -443,8 +443,8 @@ function htmlToMarkdown(html: string, selector?: string): string {
   md = md.replace(/<h4[^>]*>([\s\S]*?)<\/h4>/gi, (_, c) => `#### ${stripHtml(c)}`);
 
   // Bold/italic
-  md = md.replace(/<(strong|b)[^>]*>([\s\S]*?)<\/(strong|b)>/gi, (_, c) => `**${stripHtml(c)}**`);
-  md = md.replace(/<(em|i)[^>]*>([\s\S]*?)<\/(em|i)>/gi, (_, c) => `*${stripHtml(c)}*`);
+  md = md.replace(/<(strong|b)[^>]*>([\s\S]*?)<\/(strong|b)>/gi, (_, _tag, c) => `**${stripHtml(c)}**`);
+  md = md.replace(/<(em|i)[^>]*>([\s\S]*?)<\/(em|i)>/gi, (_, _tag, c) => `*${stripHtml(c)}*`);
 
   // Links
   md = md.replace(/<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi, (_, href, text) => `[${stripHtml(text)}](${href})`);

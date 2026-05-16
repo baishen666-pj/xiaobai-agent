@@ -83,7 +83,8 @@ describe('exportToJson', () => {
         content: '',
         toolCalls: [{
           id: 'tc_1',
-          function: { name: 'read', arguments: { file_path: '/test.ts' } },
+          name: 'read',
+          arguments: { file_path: '/test.ts' },
         }],
       },
     ];
@@ -95,7 +96,7 @@ describe('exportToJson', () => {
     const json = exportToJson(data);
     const parsed = JSON.parse(json);
     expect(parsed.session.messages[1].toolCalls).toBeDefined();
-    expect(parsed.session.messages[1].toolCalls[0].function.name).toBe('read');
+    expect(parsed.session.messages[1].toolCalls[0].name).toBe('read');
   });
 });
 
@@ -164,7 +165,8 @@ describe('exportToMarkdown', () => {
         content: '',
         toolCalls: [{
           id: 'tc_1',
-          function: { name: 'read', arguments: { file_path: '/test.ts' } },
+          name: 'read',
+          arguments: { file_path: '/test.ts' },
         }],
       },
     ];

@@ -1,4 +1,4 @@
-import type { Message } from './types.js';
+import type { Message } from '../session/manager.js';
 import type { TokenUsageSummary } from './token-tracker.js';
 import type { MetricsSnapshot } from './metrics.js';
 
@@ -31,7 +31,6 @@ export function exportToJson(data: ExportData): string {
         role: m.role,
         content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content),
         ...(m.toolCalls ? { toolCalls: m.toolCalls } : {}),
-        ...(m.toolResults ? { toolResults: m.toolResults } : {}),
       })),
     },
     ...(data.tokenUsage ? { tokenUsage: data.tokenUsage } : {}),
@@ -130,9 +129,9 @@ export function exportToMarkdown(data: ExportData): string {
         lines.push(`### Assistant`);
         if (message.toolCalls && message.toolCalls.length > 0) {
           for (const tc of message.toolCalls) {
-            lines.push(`**Tool: ${tc.function.name}**`);
+            lines.push(`**Tool: ${tc.name}**`);
             lines.push('```');
-            lines.push(typeof tc.function.arguments === 'string' ? tc.function.arguments : JSON.stringify(tc.function.arguments, null, 2));
+            lines.push(typeof tc.arguments === 'string' ? tc.arguments : JSON.stringify(tc.arguments, null, 2));
             lines.push('```');
             lines.push('');
           }
@@ -146,7 +145,7 @@ export function exportToMarkdown(data: ExportData): string {
         }
         break;
 
-      case 'tool':
+      case 'tool_result':
         lines.push(`### Tool Result`);
         lines.push('```');
         lines.push(content);

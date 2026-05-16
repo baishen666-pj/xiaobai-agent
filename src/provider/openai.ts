@@ -16,63 +16,88 @@ export class OpenAICompatibleProvider implements LLMProvider {
   private async getClient() {
     if (this.client) return this.client;
     const { default: OpenAI } = await import('openai');
-    this.client = new OpenAI({ apiKey: this.apiKey, baseURL: this.baseUrl });
+    this.client = new OpenAI({
+      apiKey: this.apiKey,
+      baseURL: this.baseUrl,
+    });
     return this.client;
   }
 
   async chat(messages: Message[], model: string, options: ChatOptions): Promise<ProviderResponse> {
     const client = await this.getClient();
-    const formatted = this.formatMessages(messages, options.system);
+    const formatted = this.formatMessages(messages);
 
-    const response = await client.chat.completions.create({
+    const createParams = {
       model,
-      messages: formatted as any,
+      messages: formatted,
       max_tokens: options.maxTokens ?? 8192,
       tools: options.tools?.map((t) => ({
         type: 'function' as const,
         function: { name: t.name, description: t.description, parameters: t.parameters },
       })),
-      ...(options.response_format ? { response_format: options.response_format as any } : {}),
-    }, { signal: options.abortSignal ?? undefined });
+      ...(options.response_format ? { response_format: options.response_format } : {}),
+    };
+
+    const response = await client.chat.completions.create(
+      createParams as Parameters<typeof client.chat.completions.create>[0],
+      { signal: options.abortSignal ?? undefined },
+    ) as Awaited<ReturnType<typeof client.chat.completions.create>>;
+
+    if (!('choices' in response) || Symbol.asyncIterator in response) {
+      throw new Error('Expected non-streaming response from OpenAI');
+    }
 
     const choice = response.choices[0];
+    if (!choice) return { content: '' };
+
+    const toolCalls = choice.message?.tool_calls?.map((tc) => {
+      let args: Record<string, unknown> = {};
+      try {
+        args = JSON.parse(tc.function?.arguments ?? '{}');
+      } catch { /* malformed arguments fallback to empty object */ }
+      return { id: tc.id ?? '', name: tc.function?.name ?? '', arguments: args };
+    });
+
     return {
-      content: choice?.message?.content ?? undefined,
-      toolCalls: choice?.message?.tool_calls?.map((tc) => ({
-        id: tc.id,
-        name: tc.function.name,
-        arguments: (() => { try { return JSON.parse(tc.function.arguments); } catch { return {}; } })(),
-      })),
+      content: choice.message?.content ?? undefined,
+      toolCalls: toolCalls?.length ? toolCalls : undefined,
       usage: response.usage
         ? { promptTokens: response.usage.prompt_tokens, completionTokens: response.usage.completion_tokens, totalTokens: response.usage.total_tokens }
         : undefined,
-      stopReason: choice?.finish_reason as ProviderResponse['stopReason'],
+      stopReason: choice.finish_reason as ProviderResponse['stopReason'],
     };
   }
 
   async *chatStream(messages: Message[], model: string, options: ChatOptions): AsyncGenerator<StreamChunk, void, void> {
     const client = await this.getClient();
-    const formatted = this.formatMessages(messages, options.system);
+    const formatted = this.formatMessages(messages);
 
-    const stream = await client.chat.completions.create({
+    const streamParams = {
       model,
-      messages: formatted as any,
+      messages: formatted,
       max_tokens: options.maxTokens ?? 8192,
-      stream: true,
+      stream: true as const,
       tools: options.tools?.map((t) => ({
         type: 'function' as const,
         function: { name: t.name, description: t.description, parameters: t.parameters },
       })),
-      ...(options.response_format ? { response_format: options.response_format as any } : {}),
-    }, { signal: options.abortSignal ?? undefined });
+      ...(options.response_format ? { response_format: options.response_format } : {}),
+    };
 
-    const toolCallStates = new Map<number, { id: string; name: string; args: string }>();
-    let lastFinishReason: string | undefined;
+    const stream = await client.chat.completions.create(
+      streamParams as Parameters<typeof client.chat.completions.create>[0],
+      { signal: options.abortSignal ?? undefined },
+    );
 
-    for await (const chunk of stream) {
+    if (!(Symbol.asyncIterator in stream)) {
+      throw new Error('Expected streaming response from OpenAI');
+    }
+
+    let currentToolId = '';
+    let currentToolName = '';
+
+    for await (const chunk of stream as AsyncIterable<import('openai/resources/chat/completions').ChatCompletionChunk>) {
       const delta = chunk.choices[0]?.delta;
-      const finishReason = chunk.choices[0]?.finish_reason;
-      if (finishReason) lastFinishReason = finishReason;
       if (!delta) continue;
 
       if (delta.content) {
@@ -81,48 +106,54 @@ export class OpenAICompatibleProvider implements LLMProvider {
 
       if (delta.tool_calls) {
         for (const tc of delta.tool_calls) {
-          const idx = tc.index;
-          if (!toolCallStates.has(idx) && tc.id) {
-            toolCallStates.set(idx, { id: tc.id, name: tc.function?.name ?? '', args: '' });
-            yield { type: 'tool_call_start', toolCallId: tc.id, toolCallName: tc.function?.name ?? '' };
+          if (tc.id) {
+            currentToolId = tc.id;
+            currentToolName = tc.function?.name ?? '';
+            yield { type: 'tool_call_start', toolCallId: currentToolId, toolCallName: currentToolName };
           }
           if (tc.function?.arguments) {
-            const state = toolCallStates.get(idx);
-            if (state) {
-              state.args += tc.function.arguments;
-              yield { type: 'tool_call_delta', toolCallId: state.id, toolCallDelta: tc.function.arguments };
-            }
+            yield { type: 'tool_call_delta', toolCallId: currentToolId, toolCallDelta: tc.function.arguments };
           }
         }
+      }
+
+      const finishReason = chunk.choices[0]?.finish_reason;
+      if (finishReason) {
+        yield { type: 'done', stopReason: finishReason };
       }
 
       if (chunk.usage) {
         yield { type: 'usage', usage: { promptTokens: chunk.usage.prompt_tokens, completionTokens: chunk.usage.completion_tokens, totalTokens: chunk.usage.total_tokens } };
       }
     }
-
-    yield { type: 'done', stopReason: lastFinishReason };
   }
 
-  private formatMessages(messages: Message[], system?: string) {
-    const formatted: Array<Record<string, unknown>> = [];
-    if (system) formatted.push({ role: 'system', content: system });
+  private formatMessages(messages: Message[]) {
+    type OpenAIMessage = { role: 'system' | 'user' | 'assistant' | 'tool'; content: string | null; tool_calls?: Array<{ id: string; type: 'function'; function: { name: string; arguments: string } }>; tool_call_id?: string };
+
+    const formatted: OpenAIMessage[] = [];
     for (const m of messages) {
-      if (m.role === 'system') { formatted.push({ role: 'system', content: m.content }); continue; }
-      if (m.role === 'tool_result') { formatted.push({ role: 'tool', content: m.content, tool_call_id: m.toolCallId ?? '' }); continue; }
+      if (m.role === 'system') {
+        formatted.push({ role: 'system', content: m.content });
+        continue;
+      }
+      if (m.role === 'tool_result') {
+        formatted.push({ role: 'tool', content: m.content, tool_call_id: m.toolCallId ?? '' });
+        continue;
+      }
       if (m.role === 'assistant' && m.toolCalls?.length) {
         formatted.push({
           role: 'assistant',
           content: m.content || null,
-          tool_calls: m.toolCalls.map(tc => ({
+          tool_calls: m.toolCalls.map((tc) => ({
             id: tc.id,
-            type: 'function',
-            function: { name: tc.name, arguments: JSON.stringify(tc.arguments) },
+            type: 'function' as const,
+            function: { name: tc.name, arguments: typeof tc.arguments === 'string' ? tc.arguments : JSON.stringify(tc.arguments) },
           })),
         });
         continue;
       }
-      formatted.push({ role: m.role, content: m.content });
+      formatted.push({ role: m.role as 'user' | 'assistant', content: m.content });
     }
     return formatted;
   }

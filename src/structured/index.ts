@@ -6,7 +6,7 @@ export { injectStructuredPrompt, extractStructuredOutput, buildStructuredErrorMe
 export { StructuredOutputAdapter } from './adapter.js';
 
 import type { Message } from '../session/manager.js';
-import type { ChatOptions, ProviderResponse } from '../provider/types.js';
+import type { ChatOptions, ProviderResponse, LLMProvider } from '../provider/types.js';
 import type { StructuredOutputConfig, StructuredOutputResult } from './types.js';
 import { StructuredOutputError } from './types.js';
 import { StructuredOutputAdapter } from './adapter.js';
@@ -24,8 +24,9 @@ export async function structuredChat<T = unknown>(
   const workingMessages = [...messages];
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const stubProvider: LLMProvider = { name: '', chat: async () => ({ content: '' }) };
     const adapted = adapter.adaptChatOptions(
-      { name: '', chat: async () => ({ content: '' }) } as any,
+      stubProvider,
       { ...options, structured: config },
     );
 

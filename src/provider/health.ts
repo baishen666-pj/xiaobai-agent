@@ -1,4 +1,4 @@
-import type { ProviderRouter } from './router.js';
+import { ProviderRouter } from './router.js';
 import type { XiaobaiConfig } from '../config/manager.js';
 
 export type HealthStatus = 'healthy' | 'degraded' | 'unhealthy' | 'unknown';
