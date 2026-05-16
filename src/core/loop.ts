@@ -7,6 +7,7 @@ import type { MemorySystem } from '../memory/system.js';
 import type { SecurityManager } from '../security/manager.js';
 import type { SkillSystem } from '../skills/system.js';
 import type { Submission, AgentEvent, StopReason, TurnContext, SandboxPolicy } from './submissions.js';
+import type { TokenTracker } from './token-tracker.js';
 import { CompactionEngine } from './compaction.js';
 import { loadHierarchicalContext, buildContextSystemPrompt } from './context.js';
 
@@ -36,6 +37,7 @@ export interface LoopOptions {
   onEvent?: (event: LoopEvent) => void;
   permissionCallback?: (tool: string, args: Record<string, unknown>) => Promise<boolean>;
   stream?: boolean;
+  tokenTracker?: TokenTracker;
 }
 
 export class AgentLoop {
@@ -96,20 +98,26 @@ export class AgentLoop {
     userMessage: string,
     sessionId: string,
     options: LoopOptions = {},
+    initialState?: Partial<LoopState>,
   ): AsyncGenerator<LoopEvent, void, void> {
     const cfg = this.config.get();
     const maxTurns = options.maxTurns ?? cfg.context.maxTurns;
     const useStream = options.stream ?? false;
+    const currentProvider = cfg.provider?.default ?? 'unknown';
+    const currentModel = cfg.model?.default ?? 'unknown';
     const state: LoopState = {
-      turn: 0,
-      messages: [],
-      totalTokens: 0,
-      lastCompactTokens: 0,
+      turn: initialState?.turn ?? 0,
+      messages: initialState?.messages ? [...initialState.messages] : [],
+      totalTokens: initialState?.totalTokens ?? 0,
+      lastCompactTokens: initialState?.lastCompactTokens ?? 0,
     };
 
     try {
       await this.hooks.emit('session_start', { sessionId });
-      state.messages = await this.sessions.loadMessages(sessionId);
+      if (!initialState?.messages) {
+        const loaded = await this.sessions.loadMessages(sessionId);
+        state.messages = loaded;
+      }
       state.messages.push({ role: 'user', content: userMessage });
 
       const hookResult = await this.hooks.emit('user_prompt_submit', { message: userMessage, sessionId });
@@ -140,9 +148,9 @@ export class AgentLoop {
         const systemPrompt = await this.buildSystemPrompt(sessionId);
 
         if (useStream) {
-          yield* this.processStreamTurn(state, systemPrompt, options);
+          yield* this.processStreamTurn(state, systemPrompt, options, currentProvider, currentModel);
         } else {
-          yield* this.processTurn(state, systemPrompt, options);
+          yield* this.processTurn(state, systemPrompt, options, currentProvider, currentModel);
         }
 
         if (state.stopReason) break;
@@ -166,7 +174,13 @@ export class AgentLoop {
       state.stopReason = 'model_error';
       yield { type: 'error', content: state.error.message };
     } finally {
-      await this.sessions.saveMessages(sessionId, state.messages);
+      await this.sessions.saveSessionState(sessionId, {
+        sessionId,
+        messages: state.messages,
+        turn: state.turn,
+        totalTokens: state.totalTokens,
+        lastCompactTokens: state.lastCompactTokens,
+      });
       if (cfg.memory.enabled) {
         await this.memory.flushIfDirty();
       }
@@ -180,6 +194,8 @@ export class AgentLoop {
     state: LoopState,
     systemPrompt: string,
     options: LoopOptions,
+    currentProvider: string,
+    currentModel: string,
   ): AsyncGenerator<LoopEvent, void, void> {
     const response = await this.provider.chat(state.messages, {
       system: systemPrompt,
@@ -193,6 +209,14 @@ export class AgentLoop {
     }
 
     state.totalTokens += response.usage?.totalTokens ?? 0;
+
+    if (options.tokenTracker && response.usage) {
+      options.tokenTracker.recordUsage(currentProvider, currentModel, {
+        promptTokens: response.usage.promptTokens,
+        completionTokens: response.usage.completionTokens,
+        totalTokens: response.usage.totalTokens,
+      });
+    }
 
     if (response.content) {
       yield { type: 'text', content: response.content, tokens: response.usage?.totalTokens };
@@ -233,9 +257,12 @@ export class AgentLoop {
     state: LoopState,
     systemPrompt: string,
     options: LoopOptions,
+    currentProvider: string,
+    currentModel: string,
   ): AsyncGenerator<LoopEvent, void, void> {
     let fullContent = '';
     let totalTokens = 0;
+    let lastUsage: { promptTokens: number; completionTokens: number; totalTokens: number } | undefined;
     const toolCallStates = new Map<number, { id: string; name: string; args: string }>();
 
     try {
@@ -269,9 +296,16 @@ export class AgentLoop {
             break;
           case 'usage':
             totalTokens += chunk.usage?.totalTokens ?? 0;
+            if (chunk.usage) {
+              lastUsage = chunk.usage;
+            }
             break;
           case 'done':
             state.totalTokens += totalTokens;
+
+            if (options.tokenTracker && lastUsage) {
+              options.tokenTracker.recordUsage(currentProvider, currentModel, lastUsage);
+            }
 
             // Collect completed tool calls from the stream's state
             const toolCalls: ToolCall[] = [];

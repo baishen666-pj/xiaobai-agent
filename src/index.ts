@@ -16,6 +16,8 @@ export { getRole, listRoles, getRoleToolFilter, type RoleDefinition, type RoleId
 export { createTask, isTaskReady, sortTasksByPriority, type Task, type TaskResult, type TaskArtifact } from './core/task.js';
 export { generateTaskPlan, PlannedTaskSchema, TaskPlanSchema, type PlannedTask, type TaskPlan } from './core/planner.js';
 export { analyzeFailure, ReflectionOutcomeSchema, type ReflectionOutcome } from './core/reflection.js';
+export { PricingTable, type PricingEntry, type TokenCost } from './core/pricing.js';
+export { TokenTracker, type TokenUsageRecord, type TokenUsageSummary } from './core/token-tracker.js';
 export { Workspace, type WorkspaceEntry } from './core/workspace.js';
 export { DashboardServer, type DashboardServerOptions } from './server/index.js';
 export { EventBridge } from './server/eventBridge.js';

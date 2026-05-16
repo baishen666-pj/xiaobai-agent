@@ -183,9 +183,21 @@ function getToolArgSummary(name: string, args: Record<string, unknown>): string 
     case 'bash':
       return truncate(String(args['command'] ?? ''), 60);
     case 'read':
-    case 'write':
-    case 'edit':
       return truncate(String(args['file_path'] ?? ''), 60);
+    case 'write': {
+      const path = truncate(String(args['file_path'] ?? ''), 50);
+      const content = String(args['content'] ?? '');
+      const lines = content.split('\n').length;
+      return `${path} (${lines} line${lines !== 1 ? 's' : ''} added)`;
+    }
+    case 'edit': {
+      const path = truncate(String(args['file_path'] ?? ''), 50);
+      const oldStr = String(args['old_string'] ?? '');
+      const newStr = String(args['new_string'] ?? '');
+      const oldLines = oldStr.split('\n').length;
+      const newLines = newStr.split('\n').length;
+      return `${path} (${oldLines} removed, ${newLines} added)`;
+    }
     case 'grep':
       return truncate(String(args['pattern'] ?? ''), 40);
     case 'glob':
@@ -210,6 +222,29 @@ export function formatTokenUsage(tokens: number): string {
   if (tokens < 1000) return `${tokens}`;
   if (tokens < 1_000_000) return `${(tokens / 1000).toFixed(1)}k`;
   return `${(tokens / 1_000_000).toFixed(1)}M`;
+}
+
+export function formatCost(cost: number): string {
+  if (cost < 0.01) return `$${cost.toFixed(4)}`;
+  return `$${cost.toFixed(2)}`;
+}
+
+export function formatTokenSummary(summary: { totalTokens: number; totalCost: number; totalPromptTokens: number; totalCompletionTokens: number; byModel: Map<string, { tokens: number; cost: number }> }): string {
+  const lines: string[] = [];
+  lines.push(chalk.cyan('  Session Cost Summary:'));
+  lines.push(chalk.gray(`    Input:    ${formatTokenUsage(summary.totalPromptTokens)} tokens`));
+  lines.push(chalk.gray(`    Output:   ${formatTokenUsage(summary.totalCompletionTokens)} tokens`));
+  lines.push(chalk.gray(`    Total:    ${formatTokenUsage(summary.totalTokens)} tokens`));
+  lines.push(chalk.gray(`    Cost:     ${formatCost(summary.totalCost)}`));
+
+  if (summary.byModel.size > 0) {
+    lines.push('');
+    for (const [model, data] of summary.byModel) {
+      lines.push(chalk.gray(`    ${model}: ${formatTokenUsage(data.tokens)} tokens, ${formatCost(data.cost)}`));
+    }
+  }
+
+  return lines.join('\n');
 }
 
 export function clearLine(): void {

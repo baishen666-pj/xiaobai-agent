@@ -34,6 +34,8 @@ function createMockAgent(): XiaobaiAgent {
       createSession: vi.fn().mockReturnValue('test-session'),
       loadMessages: vi.fn().mockResolvedValue([]),
       saveMessages: vi.fn().mockResolvedValue(undefined),
+      saveSessionState: vi.fn().mockResolvedValue(undefined),
+      loadSessionState: vi.fn().mockResolvedValue(null),
     },
     hooks: { emit: vi.fn().mockResolvedValue({ exitCode: 'ok' }) },
     memory: { getSystemPromptBlock: vi.fn().mockResolvedValue(null), flushIfDirty: vi.fn().mockResolvedValue(undefined) },

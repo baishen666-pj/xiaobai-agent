@@ -17,6 +17,8 @@ function createMockDeps(): AgentDeps {
     createSession: vi.fn().mockReturnValue('sess_1'),
     loadMessages: vi.fn().mockResolvedValue([]),
     saveMessages: vi.fn().mockResolvedValue(undefined),
+    saveSessionState: vi.fn().mockResolvedValue(undefined),
+    loadSessionState: vi.fn().mockResolvedValue(null),
   };
 
   const mockHooks = {

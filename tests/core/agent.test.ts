@@ -29,6 +29,8 @@ function createMockDeps(): AgentDeps {
       createSession: vi.fn().mockReturnValue('test-session-1'),
       loadMessages: vi.fn().mockResolvedValue([]),
       saveMessages: vi.fn().mockResolvedValue(undefined),
+      saveSessionState: vi.fn().mockResolvedValue(undefined),
+      loadSessionState: vi.fn().mockResolvedValue(null),
     },
     hooks: {
       emit: vi.fn().mockResolvedValue({ exitCode: 'ok' }),

@@ -4,6 +4,7 @@ export class SecurityManager {
   private config: XiaobaiConfig;
   private approvedCommands = new Set<string>();
   private deniedCommands = new Set<string>();
+  private trustedToolTypes = new Set<string>();
 
   constructor(config: XiaobaiConfig) {
     this.config = config;
@@ -23,6 +24,11 @@ export class SecurityManager {
 
     if (mode === 'auto') {
       return this.autoApprove(tool, args);
+    }
+
+    // Check trusted tool types
+    if (this.trustedToolTypes.has(tool)) {
+      return true;
     }
 
     // default mode: check allowlist
@@ -62,7 +68,7 @@ export class SecurityManager {
     return !this.isDangerousCommand(command);
   }
 
-  private isDangerousCommand(command: string): boolean {
+  isDangerousCommand(command: string): boolean {
     const dangerousPatterns = [
       /\brm\s+(-rf?|-fr?)\s+\//,
       /\bdd\s+if=/,
@@ -101,5 +107,13 @@ export class SecurityManager {
 
   isApproved(command: string): boolean {
     return this.approvedCommands.has(command);
+  }
+
+  addTrustedToolType(toolName: string): void {
+    this.trustedToolTypes.add(toolName);
+  }
+
+  isToolTypeTrusted(toolName: string): boolean {
+    return this.trustedToolTypes.has(toolName);
   }
 }

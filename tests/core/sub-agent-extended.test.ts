@@ -39,6 +39,10 @@ function createMockSessions(): SessionManager {
     addMessage: vi.fn(),
     getMessages: vi.fn().mockReturnValue([]),
     deleteSession: vi.fn(),
+    loadMessages: vi.fn().mockResolvedValue([]),
+    saveMessages: vi.fn().mockResolvedValue(undefined),
+    saveSessionState: vi.fn().mockResolvedValue(undefined),
+    loadSessionState: vi.fn().mockResolvedValue(null),
   } as unknown as SessionManager;
 }
 

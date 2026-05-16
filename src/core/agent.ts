@@ -48,9 +48,24 @@ export class XiaobaiAgent {
     message: string,
     sessionId?: string,
     options?: LoopOptions,
+    resumeFrom?: string,
   ): AsyncGenerator<LoopEvent, void, void> {
-    const sid = sessionId ?? this.deps.sessions.createSession();
-    for await (const event of this.loop.run(message, sid, options)) {
+    const sid = sessionId ?? resumeFrom ?? this.deps.sessions.createSession();
+
+    let initialState: Partial<import('./loop.js').LoopState> | undefined;
+    if (resumeFrom) {
+      const sessionState = await this.deps.sessions.loadSessionState(resumeFrom);
+      if (sessionState) {
+        initialState = {
+          turn: sessionState.turn,
+          messages: sessionState.messages,
+          totalTokens: sessionState.totalTokens,
+          lastCompactTokens: sessionState.lastCompactTokens,
+        };
+      }
+    }
+
+    for await (const event of this.loop.run(message, sid, options, initialState)) {
       yield event;
     }
   }

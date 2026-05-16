@@ -44,6 +44,8 @@ function createLoopDeps(overrides: Record<string, any> = {}) {
     createSession: vi.fn().mockReturnValue('test-session'),
     loadMessages: vi.fn().mockResolvedValue([]),
     saveMessages: vi.fn().mockResolvedValue(undefined),
+    saveSessionState: vi.fn().mockResolvedValue(undefined),
+    loadSessionState: vi.fn().mockResolvedValue(null),
   } as unknown as SessionManager;
 
   const mockHooks = {
@@ -181,7 +183,7 @@ describe('AgentLoop', () => {
     for await (const _ of loop.run('Hello', 'session-1')) {
       // consume
     }
-    expect(loopDeps.mocks.sessions.saveMessages).toHaveBeenCalledWith('session-1', expect.any(Array));
+    expect(loopDeps.mocks.sessions.saveSessionState).toHaveBeenCalledWith('session-1', expect.objectContaining({ sessionId: 'session-1', messages: expect.any(Array) }));
   });
 
   it('emits hooks during lifecycle', async () => {
@@ -499,8 +501,9 @@ describe('AgentLoop stream mode', () => {
     for await (const _ of loop.run('Hi', 'session-1', { stream: true })) {
       // consume
     }
-    expect(mocks.sessions.saveMessages).toHaveBeenCalledWith('session-1', expect.any(Array));
-    const savedMessages = mocks.sessions.saveMessages.mock.calls[0][1] as any[];
+    expect(mocks.sessions.saveSessionState).toHaveBeenCalledWith('session-1', expect.objectContaining({ sessionId: 'session-1', messages: expect.any(Array) }));
+    const savedState = mocks.sessions.saveSessionState.mock.calls[0][1] as any;
+    const savedMessages = savedState.messages;
     expect(savedMessages.some((m: any) => m.content === 'Hello')).toBe(true);
   });
 });
@@ -996,7 +999,7 @@ describe('AgentLoop edge cases', () => {
       // consume
     }
 
-    expect(mocks.sessions.saveMessages).toHaveBeenCalledWith('session-1', expect.any(Array));
+    expect(mocks.sessions.saveSessionState).toHaveBeenCalledWith('session-1', expect.objectContaining({ sessionId: 'session-1', messages: expect.any(Array) }));
   });
 
   it('emits stop hook with error reason on provider failure', async () => {

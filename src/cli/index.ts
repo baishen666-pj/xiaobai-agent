@@ -4,12 +4,14 @@ import chalk from 'chalk';
 import { Command } from 'commander';
 import { XiaobaiAgent } from '../core/agent.js';
 import { Orchestrator } from '../core/orchestrator.js';
+import { PricingTable } from '../core/pricing.js';
+import { TokenTracker } from '../core/token-tracker.js';
 import { DashboardServer } from '../server/index.js';
 import { SkillSystem } from '../skills/system.js';
 import { listRoles } from '../core/roles.js';
 import { createInterface } from 'node:readline';
 import { execFile } from 'node:child_process';
-import { Spinner, renderMarkdown, formatToolCall, formatTokenUsage, clearLine, printBanner, printHelp } from './renderer.js';
+import { Spinner, renderMarkdown, formatToolCall, formatTokenUsage, clearLine, printBanner, printHelp, formatCost, formatTokenSummary } from './renderer.js';
 import { StreamingMarkdownRenderer } from './streaming-renderer.js';
 import { PermissionPrompt } from './permissions.js';
 
@@ -28,13 +30,14 @@ program
   .option('--sandbox <mode>', 'Sandbox mode: read-only | workspace-write | full-access')
   .option('--auto', 'Auto-approve all tool calls')
   .option('--dashboard [port]', 'Enable dashboard with optional port')
+  .option('-r, --resume [sessionId]', 'Resume a previous session (latest if no ID given)')
   .action(async (options: Record<string, string>) => {
     printBanner();
 
     try {
       const agent = await XiaobaiAgent.create();
       const spinner = new Spinner();
-      const permPrompt = new PermissionPrompt(options.auto ? 'auto' : 'default');
+      const permPrompt = new PermissionPrompt(options.auto ? 'auto' : 'default', agent.getDeps().security);
       const streamRenderer = new StreamingMarkdownRenderer();
 
       const rl = createInterface({
@@ -43,9 +46,38 @@ program
       });
       permPrompt.setReadline(rl);
 
-      let sessionId: string | undefined = agent.getDeps().sessions.createSession();
+      let sessionId: string | undefined;
+      let resumeFrom: string | undefined;
       let totalTokens = 0;
       let turnCount = 0;
+
+      if (options.resume !== undefined) {
+        const resumeId = typeof options.resume === 'string' && options.resume.length > 0
+          ? options.resume
+          : await agent.getDeps().sessions.getLatestSession();
+        if (resumeId) {
+          const state = await agent.getDeps().sessions.loadSessionState(resumeId);
+          if (state) {
+            resumeFrom = resumeId;
+            sessionId = resumeId;
+            turnCount = state.turn;
+            totalTokens = state.totalTokens;
+            console.log(chalk.cyan(`  Resumed session: ${resumeId}`));
+            console.log(chalk.gray(`  ${state.messages.length} messages, ${state.turn} turns\n`));
+          } else {
+            console.log(chalk.yellow(`  Session not found: ${resumeId}. Starting new session.\n`));
+            sessionId = agent.getDeps().sessions.createSession();
+          }
+        } else {
+          console.log(chalk.yellow('  No previous sessions found. Starting new session.\n'));
+          sessionId = agent.getDeps().sessions.createSession();
+        }
+      } else {
+        sessionId = agent.getDeps().sessions.createSession();
+      }
+
+      const pricingTable = new PricingTable();
+      const tokenTracker = new TokenTracker(pricingTable);
 
       let dashServer: DashboardServer | undefined;
       let chatListener: ((event: any) => void) | undefined;
@@ -65,6 +97,10 @@ program
 
           if (trimmed === '/exit' || trimmed === '/quit') {
             console.log(chalk.gray(`\n  Turns: ${turnCount}, Tokens: ${formatTokenUsage(totalTokens)}`));
+            const tokenSummary = tokenTracker.getSummary();
+            if (tokenSummary.totalTokens > 0) {
+              console.log(formatTokenSummary(tokenSummary));
+            }
             console.log(chalk.gray('  Goodbye!\n'));
             if (dashServer) await dashServer.stop();
             rl.close();
@@ -153,7 +189,8 @@ program
             for await (const event of agent.chat(trimmed, sessionId, {
               stream: true,
               permissionCallback: (tool, args) => permPrompt.checkPermission(tool, args),
-            })) {
+              tokenTracker,
+            }, resumeFrom)) {
               chatListener?.(event);
               switch (event.type) {
                 case 'text':
@@ -190,6 +227,8 @@ program
                   spinner.stop();
                   streamRenderer.flush();
                   if (event.tokens) totalTokens += event.tokens;
+                  const summary = tokenTracker.getSummary();
+                  console.log(chalk.gray(`  Tokens: ${formatTokenUsage(summary.totalTokens)} | Cost: ${formatCost(summary.totalCost)}`));
                   console.log(); // newline after response
                   break;
 
@@ -200,6 +239,17 @@ program
               }
 
             }
+
+            // Save session state after each turn
+            if (sessionId) {
+              await agent.getDeps().sessions.saveSessionState(sessionId, {
+                sessionId,
+                turn: turnCount,
+                totalTokens,
+              });
+            }
+            // Clear resumeFrom so subsequent messages use normal flow
+            resumeFrom = undefined;
           } catch (error) {
             spinner.stop();
             console.log(chalk.red(`\n  Error: ${(error as Error).message}`));

@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { readFile, writeFile, readdir, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 
 export interface Message {
   role: 'user' | 'assistant' | 'system' | 'tool_result';
@@ -23,6 +23,18 @@ export interface Session {
   totalTokens: number;
 }
 
+export interface SessionState {
+  sessionId: string;
+  messages: Message[];
+  turn: number;
+  totalTokens: number;
+  lastCompactTokens: number;
+  model?: string;
+  provider?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
 const SAFE_SESSION_ID = /^session_\d+_[a-f0-9]{8}$/;
 
 export class SessionManager {
@@ -37,7 +49,7 @@ export class SessionManager {
 
   // Sync by design — callers expect an immediate ID to use in subsequent async calls
   createSession(): string {
-    const id = `session_${Date.now()}_${createHash('md5').update(Math.random().toString()).digest('hex').slice(0, 8)}`;
+    const id = `session_${Date.now()}_${randomBytes(4).toString('hex')}`;
     writeFileSync(this.getSessionPath(id), JSON.stringify([], null, 2), 'utf-8');
     return id;
   }
@@ -66,18 +78,13 @@ export class SessionManager {
       const sessions: Session[] = [];
 
       for (const f of jsonFiles) {
+        const id = f.replace('.json', '');
         try {
           const raw = await readFile(join(this.sessionsDir, f), 'utf-8');
-          const messages = JSON.parse(raw) as Message[];
-          sessions.push({
-            id: f.replace('.json', ''),
-            createdAt: messages[0]?.timestamp ?? 0,
-            updatedAt: messages[messages.length - 1]?.timestamp ?? 0,
-            messageCount: messages.length,
-            totalTokens: 0,
-          });
+          const parsed = JSON.parse(raw);
+          sessions.push(this.extractSessionMetadata(id, parsed));
         } catch {
-          sessions.push({ id: f.replace('.json', ''), createdAt: 0, updatedAt: 0, messageCount: 0, totalTokens: 0 });
+          sessions.push({ id, createdAt: 0, updatedAt: 0, messageCount: 0, totalTokens: 0 });
         }
       }
 
@@ -85,6 +92,70 @@ export class SessionManager {
     } catch {
       return [];
     }
+  }
+
+  async saveSessionState(sessionId: string, state: Partial<SessionState>): Promise<void> {
+    this.validateSessionId(sessionId);
+    const path = this.getSessionPath(sessionId);
+
+    let existing: Partial<SessionState> = {};
+    try {
+      const raw = await readFile(path, 'utf-8');
+      const parsed = JSON.parse(raw);
+      existing = this.isSessionState(parsed) ? parsed : { messages: parsed };
+    } catch {
+      existing = { messages: [] };
+    }
+
+    const merged: SessionState = {
+      sessionId,
+      messages: state.messages ?? existing.messages ?? [],
+      turn: state.turn ?? existing.turn ?? 0,
+      totalTokens: state.totalTokens ?? existing.totalTokens ?? 0,
+      lastCompactTokens: state.lastCompactTokens ?? existing.lastCompactTokens ?? 0,
+      model: state.model ?? existing.model,
+      provider: state.provider ?? existing.provider,
+      createdAt: existing.createdAt ?? Date.now(),
+      updatedAt: Date.now(),
+    };
+
+    await writeFile(path, JSON.stringify(merged, null, 2), 'utf-8');
+  }
+
+  async loadSessionState(sessionId: string): Promise<SessionState | null> {
+    this.validateSessionId(sessionId);
+    const path = this.getSessionPath(sessionId);
+    try {
+      const raw = await readFile(path, 'utf-8');
+      const parsed = JSON.parse(raw);
+
+      if (this.isSessionState(parsed)) {
+        return parsed as SessionState;
+      }
+
+      // Backward compatibility: old format is just Message[]
+      if (Array.isArray(parsed)) {
+        return {
+          sessionId,
+          messages: parsed,
+          turn: 0,
+          totalTokens: 0,
+          lastCompactTokens: 0,
+          createdAt: parsed[0]?.timestamp ?? 0,
+          updatedAt: parsed[parsed.length - 1]?.timestamp ?? 0,
+        };
+      }
+
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  async getLatestSession(): Promise<string | null> {
+    const sessions = await this.listSessions();
+    if (sessions.length === 0) return null;
+    return sessions[0].id;
   }
 
   async deleteSession(sessionId: string): Promise<boolean> {
@@ -102,6 +173,35 @@ export class SessionManager {
     if (!SAFE_SESSION_ID.test(sessionId)) {
       throw new Error(`Invalid session ID: ${sessionId.slice(0, 20)}`);
     }
+  }
+
+  private isSessionState(parsed: unknown): parsed is SessionState {
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return false;
+    const obj = parsed as Record<string, unknown>;
+    return typeof obj.sessionId === 'string' && Array.isArray(obj.messages);
+  }
+
+  private extractSessionMetadata(id: string, parsed: unknown): Session {
+    if (this.isSessionState(parsed)) {
+      return {
+        id,
+        createdAt: parsed.createdAt,
+        updatedAt: parsed.updatedAt,
+        messageCount: parsed.messages.length,
+        totalTokens: parsed.totalTokens,
+      };
+    }
+    if (Array.isArray(parsed)) {
+      const msgs = parsed as Message[];
+      return {
+        id,
+        createdAt: msgs[0]?.timestamp ?? 0,
+        updatedAt: msgs[msgs.length - 1]?.timestamp ?? 0,
+        messageCount: msgs.length,
+        totalTokens: 0,
+      };
+    }
+    return { id, createdAt: 0, updatedAt: 0, messageCount: 0, totalTokens: 0 };
   }
 
   private getSessionPath(sessionId: string): string {
