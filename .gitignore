@@ -19,3 +19,5 @@ test-*.txt
 tmp/
 xiaobai-e2e-*/
 xiaobai-e2e-*.txt
+hello.txt
+output.txt
