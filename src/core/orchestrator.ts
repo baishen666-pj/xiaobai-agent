@@ -13,11 +13,13 @@ import { AgentLoop, type LoopEvent } from './loop.js';
 import { ToolRegistry } from '../tools/registry.js';
 import type { AgentEvent, SessionSource } from './submissions.js';
 import { generateTaskPlan, type TaskPlan } from './planner.js';
+import { analyzeFailure, type ReflectionOutcome } from './reflection.js';
 import { join } from 'node:path';
 
 export type OrchestratorEvent =
   | { type: 'plan'; tasks: Task[] }
   | { type: 'plan_generated'; plan: TaskPlan }
+  | { type: 'task_reflecting'; task: Task; error: string }
   | { type: 'task_started'; task: Task; agentId: string }
   | { type: 'task_progress'; task: Task; event: LoopEvent }
   | { type: 'task_completed'; task: Task; result: TaskResult }
@@ -296,10 +298,35 @@ export class Orchestrator {
         this.emit({ type: 'task_failed', task, error: errorMsg });
       } else {
         task.status = 'pending';
+        this.applyReflection(task, errorMsg, output).catch(() => {});
       }
     } finally {
       handle.busy = false;
       handle.currentTask = undefined;
+    }
+  }
+
+  private async applyReflection(task: Task, errorMsg: string, output: string): Promise<void> {
+    this.emit({ type: 'task_reflecting', task, error: errorMsg });
+
+    try {
+      const chatFn = (messages: any, opts: any) => this.deps.provider.chat(messages, opts);
+      const reflection = await analyzeFailure(chatFn, task.description, errorMsg, output);
+
+      if (reflection.strategy === 'give_up') {
+        task.maxRetries = task.retries;
+        return;
+      }
+
+      if (reflection.strategy === 'retry_different_role' && reflection.suggestedRole) {
+        task.role = reflection.suggestedRole;
+      }
+
+      if (reflection.strategy === 'retry_simplified' && reflection.revisedDescription) {
+        task.description = reflection.revisedDescription;
+      }
+    } catch {
+      // Reflection failed — keep original task config, just retry
     }
   }
 

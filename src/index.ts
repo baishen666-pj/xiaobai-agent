@@ -15,6 +15,7 @@ export { Orchestrator, type OrchestratorEvent, type OrchestratorOptions } from '
 export { getRole, listRoles, getRoleToolFilter, type RoleDefinition, type RoleId } from './core/roles.js';
 export { createTask, isTaskReady, sortTasksByPriority, type Task, type TaskResult, type TaskArtifact } from './core/task.js';
 export { generateTaskPlan, PlannedTaskSchema, TaskPlanSchema, type PlannedTask, type TaskPlan } from './core/planner.js';
+export { analyzeFailure, ReflectionOutcomeSchema, type ReflectionOutcome } from './core/reflection.js';
 export { Workspace, type WorkspaceEntry } from './core/workspace.js';
 export { DashboardServer, type DashboardServerOptions } from './server/index.js';
 export { EventBridge } from './server/eventBridge.js';
