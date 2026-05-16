@@ -275,7 +275,7 @@ export class MCPConnection {
       const initResult = await this.sendRequest('initialize', {
         protocolVersion: '2024-11-05',
         capabilities: {},
-        clientInfo: { name: 'xiaobai', version: '0.1.0' },
+        clientInfo: { name: 'xiaobai', version: '0.3.0' },
       });
 
       this.capabilities = (initResult as Record<string, unknown>)?.capabilities as Record<string, unknown> ?? {};
@@ -481,7 +481,7 @@ class MCPSSEConnection extends MCPConnection {
     const initResult = await this.sendRequest('initialize', {
       protocolVersion: '2024-11-05',
       capabilities: {},
-      clientInfo: { name: 'xiaobai', version: '0.1.0' },
+      clientInfo: { name: 'xiaobai', version: '0.3.0' },
     });
     void initResult;
     await this.sendNotification('notifications/initialized', {});

@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdirSync, rmSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { randomUUID } from 'node:crypto';
 import { MemorySystem } from '../../src/memory/system.js';
 
 describe('MemorySystem', () => {
@@ -9,7 +10,7 @@ describe('MemorySystem', () => {
   let memory: MemorySystem;
 
   beforeEach(() => {
-    testDir = join(tmpdir(), `xiaobai-test-${Date.now()}`);
+    testDir = join(tmpdir(), `xiaobai-mem-${randomUUID()}`);
     mkdirSync(testDir, { recursive: true });
     memory = new MemorySystem(testDir, 100, 50);
   });

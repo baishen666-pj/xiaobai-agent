@@ -342,7 +342,10 @@ const editTool = (context?: ToolContext): Tool => ({
   },
 });
 
-let rgAvailable: boolean | null = null;
+export let rgAvailable: boolean | null = null;
+
+/** Reset ripgrep availability cache (for testing) */
+export function _resetRgCache(): void { rgAvailable = null; }
 
 function isRgAvailable(): boolean {
   if (rgAvailable !== null) return rgAvailable;

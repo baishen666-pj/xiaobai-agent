@@ -28,7 +28,7 @@ function buildDefaultAgentCard(): AgentCard {
   return {
     name: 'xiaobai-agent',
     description: 'Fusion AI agent with multi-agent orchestration, 18+ LLM providers, and MCP integration',
-    version: '0.2.0',
+    version: '0.3.0',
     capabilities: { streaming: true, pushNotifications: false },
     defaultInputModes: ['text/plain'],
     defaultOutputModes: ['text/plain'],
