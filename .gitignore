@@ -8,6 +8,14 @@ dist/
 .DS_Store
 Thumbs.db
 coverage/
+coverage_json/
 .cache/
 ~/.xiaobai/
 public/
+
+# Test artifacts
+test*.txt
+test-*.txt
+tmp/
+xiaobai-e2e-*/
+xiaobai-e2e-*.txt
