@@ -69,6 +69,7 @@ program
             if (dashServer) await dashServer.stop();
             rl.close();
             process.exit(0);
+            return; // unreachable in production, prevents fallthrough in tests
           }
 
           if (trimmed === '/help') { printHelp(); prompt(); return; }

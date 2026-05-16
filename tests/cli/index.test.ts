@@ -273,7 +273,7 @@ describe('CLI index.ts', () => {
 
   describe('skills builtins', () => {
     it('lists builtin templates', async () => {
-      await findSubCmd('skills', 'builtins').parseAsync(['node', 'xiaobai', 'builtins']);
+      await findSubCmd('skills', 'builtins').parseAsync(['node', 'xiaobai']);
       const o = output();
       expect(o).toContain('Built-in Skill Templates');
       expect(o).toContain('code-review');
@@ -282,42 +282,42 @@ describe('CLI index.ts', () => {
 
   describe('skills list', () => {
     it('shows not enabled', async () => {
-      await findSubCmd('skills', 'list').parseAsync(['node', 'xiaobai', 'list']);
+      await findSubCmd('skills', 'list').parseAsync(['node', 'xiaobai']);
       expect(output()).toContain('Skills system not enabled');
     });
   });
 
   describe('skills show', () => {
     it('shows not found', async () => {
-      await findSubCmd('skills', 'show').parseAsync(['node', 'xiaobai', 'show', 'nonexistent']);
+      await findSubCmd('skills', 'show').parseAsync(['node', 'xiaobai', 'nonexistent']);
       expect(output()).toContain('not found');
     });
   });
 
   describe('skills create', () => {
     it('shows not enabled', async () => {
-      await findSubCmd('skills', 'create').parseAsync(['node', 'xiaobai', 'create', 'my-skill']);
+      await findSubCmd('skills', 'create').parseAsync(['node', 'xiaobai', 'my-skill']);
       expect(output()).toContain('not enabled');
     });
   });
 
   describe('skills install', () => {
     it('shows not enabled', async () => {
-      await findSubCmd('skills', 'install').parseAsync(['node', 'xiaobai', 'install', 'http://example.com']);
+      await findSubCmd('skills', 'install').parseAsync(['node', 'xiaobai', 'http://example.com']);
       expect(output()).toContain('not enabled');
     });
   });
 
   describe('skills search', () => {
     it('shows not enabled', async () => {
-      await findSubCmd('skills', 'search').parseAsync(['node', 'xiaobai', 'search', 'test']);
+      await findSubCmd('skills', 'search').parseAsync(['node', 'xiaobai', 'test']);
       expect(output()).toContain('not enabled');
     });
   });
 
   describe('skills install-builtin', () => {
     it('shows not enabled or already installed', async () => {
-      await findSubCmd('skills', 'install-builtin').parseAsync(['node', 'xiaobai', 'install-builtin']);
+      await findSubCmd('skills', 'install-builtin').parseAsync(['node', 'xiaobai']);
       const o = output();
       expect(o.includes('not enabled') || o.includes('already installed')).toBe(true);
     });
@@ -329,7 +329,7 @@ describe('CLI index.ts', () => {
 
   describe('config show', () => {
     it('outputs JSON', async () => {
-      await findSubCmd('config', 'show').parseAsync(['node', 'xiaobai', 'show']);
+      await findSubCmd('config', 'show').parseAsync(['node', 'xiaobai']);
       const parsed = JSON.parse(output());
       expect(parsed.model).toBeDefined();
       expect(parsed.provider).toBeDefined();
@@ -342,7 +342,7 @@ describe('CLI index.ts', () => {
 
   describe('memory list', () => {
     it('lists entries', async () => {
-      await findSubCmd('memory', 'list').parseAsync(['node', 'xiaobai', 'list']);
+      await findSubCmd('memory', 'list').parseAsync(['node', 'xiaobai']);
       const o = output();
       expect(o).toContain('Memory:');
       expect(o).toContain('User Profile:');
@@ -355,7 +355,7 @@ describe('CLI index.ts', () => {
 
   describe('dashboard', () => {
     it('shows URLs', async () => {
-      await findCmd('dashboard').parseAsync(['node', 'xiaobai', 'dashboard', '--no-open', '-p', '3001']);
+      await findCmd('dashboard').parseAsync(['node', 'xiaobai', '--no-open', '-p', '3001']);
       const o = output();
       expect(o).toContain('Xiaobai Dashboard');
       expect(o).toContain('http://localhost:3001');
@@ -369,7 +369,7 @@ describe('CLI index.ts', () => {
 
   describe('exec non-stream', () => {
     it('runs chatSync', async () => {
-      await findCmd('exec').parseAsync(['node', 'xiaobai', 'exec', 'hello']);
+      await findCmd('exec').parseAsync(['node', 'xiaobai', 'hello']);
       expect(output()).toContain('sync-response');
     });
   });
@@ -378,20 +378,20 @@ describe('CLI index.ts', () => {
     it('streams events', async () => {
       const { XiaobaiAgent } = await import('../../src/core/agent.js');
       const agent = await XiaobaiAgent.create();
-      async function* gen() {
+      function* gen() {
         yield { type: 'stream', content: 'Hi' };
         yield { type: 'stream', content: ' there' };
         yield { type: 'stop' };
       }
       agent.chat = vi.fn().mockReturnValue(gen());
-      await findCmd('exec').parseAsync(['node', 'xiaobai', 'exec', '--stream', 'hi']);
+      await findCmd('exec').parseAsync(['node', 'xiaobai', '--stream', 'hi']);
       expect(output()).toContain('Hi');
     });
   });
 
   describe('exec --dashboard', () => {
     it('starts dashboard', async () => {
-      await findCmd('exec').parseAsync(['node', 'xiaobai', 'exec', '--dashboard', 'prompt']);
+      await findCmd('exec').parseAsync(['node', 'xiaobai', 'prompt', '--dashboard']);
       expect(output()).toContain('Dashboard:');
     });
   });
@@ -400,7 +400,7 @@ describe('CLI index.ts', () => {
     it('shows error', async () => {
       const { XiaobaiAgent } = await import('../../src/core/agent.js');
       (XiaobaiAgent.create as any).mockRejectedValueOnce(new Error('no key'));
-      await findCmd('exec').parseAsync(['node', 'xiaobai', 'exec', 'fail']);
+      await findCmd('exec').parseAsync(['node', 'xiaobai', 'fail']);
       expect(output()).toContain('no key');
     });
   });
@@ -411,7 +411,7 @@ describe('CLI index.ts', () => {
 
   describe('run command', () => {
     it('shows results', async () => {
-      await findCmd('run').parseAsync(['node', 'xiaobai', 'run', 'build project']);
+      await findCmd('run').parseAsync(['node', 'xiaobai', 'build project']);
       const o = output();
       expect(o).toContain('Running:');
       expect(o).toContain('Results');
@@ -421,7 +421,7 @@ describe('CLI index.ts', () => {
 
   describe('run with dashboard', () => {
     it('starts dashboard', async () => {
-      await findCmd('run').parseAsync(['node', 'xiaobai', 'run', '-p', '3003', 'task']);
+      await findCmd('run').parseAsync(['node', 'xiaobai', '-p', '3003', 'task']);
       expect(output()).toContain('Dashboard:');
     });
   });
@@ -432,7 +432,7 @@ describe('CLI index.ts', () => {
 
   describe('plugins list', () => {
     it('shows not enabled or empty', async () => {
-      await findSubCmd('plugins', 'list').parseAsync(['node', 'xiaobai', 'list']);
+      await findSubCmd('plugins', 'list').parseAsync(['node', 'xiaobai']);
       const o = output();
       expect(o.includes('Plugins system not enabled') || o.includes('No plugins installed')).toBe(true);
     });
@@ -447,14 +447,14 @@ describe('CLI index.ts', () => {
 
   describe('plugins install', () => {
     it('shows not enabled', async () => {
-      await findSubCmd('plugins', 'install').parseAsync(['node', 'xiaobai', 'install', '/tmp/fake']);
+      await findSubCmd('plugins', 'install').parseAsync(['node', 'xiaobai', '/tmp/fake']);
       expect(output()).toContain('not enabled');
     });
   });
 
   describe('plugins uninstall', () => {
     it('shows not enabled', async () => {
-      await findSubCmd('plugins', 'uninstall').parseAsync(['node', 'xiaobai', 'uninstall', 'fake']);
+      await findSubCmd('plugins', 'uninstall').parseAsync(['node', 'xiaobai', 'fake']);
       expect(output()).toContain('not enabled');
     });
   });
@@ -466,7 +466,7 @@ describe('CLI index.ts', () => {
   describe('chat /exit', () => {
     it('exits', async () => {
       mockQuestion.mockImplementation((_p: string, cb: (s: string) => void) => cb('/exit'));
-      await findCmd('chat').parseAsync(['node', 'xiaobai', 'chat']);
+      await findCmd('chat').parseAsync(['node', 'xiaobai']);
       expect(output()).toContain('Goodbye');
     });
   });
@@ -474,7 +474,7 @@ describe('CLI index.ts', () => {
   describe('chat /quit', () => {
     it('exits', async () => {
       mockQuestion.mockImplementation((_p: string, cb: (s: string) => void) => cb('/quit'));
-      await findCmd('chat').parseAsync(['node', 'xiaobai', 'chat']);
+      await findCmd('chat').parseAsync(['node', 'xiaobai']);
       expect(output()).toContain('Goodbye');
     });
   });
@@ -484,7 +484,7 @@ describe('CLI index.ts', () => {
       const inputs = ['/help', '/exit'];
       let i = 0;
       mockQuestion.mockImplementation((_p, cb) => cb(inputs[i++] ?? '/exit'));
-      await findCmd('chat').parseAsync(['node', 'xiaobai', 'chat']);
+      await findCmd('chat').parseAsync(['node', 'xiaobai']);
       expect(output()).toContain('Goodbye');
     });
   });
@@ -494,7 +494,7 @@ describe('CLI index.ts', () => {
       const inputs = ['/memory', '/exit'];
       let i = 0;
       mockQuestion.mockImplementation((_p, cb) => cb(inputs[i++] ?? '/exit'));
-      await findCmd('chat').parseAsync(['node', 'xiaobai', 'chat']);
+      await findCmd('chat').parseAsync(['node', 'xiaobai']);
       expect(output()).toContain('Memory:');
       expect(output()).toContain('50/100');
     });
@@ -505,7 +505,7 @@ describe('CLI index.ts', () => {
       const inputs = ['/tools', '/exit'];
       let i = 0;
       mockQuestion.mockImplementation((_p, cb) => cb(inputs[i++] ?? '/exit'));
-      await findCmd('chat').parseAsync(['node', 'xiaobai', 'chat']);
+      await findCmd('chat').parseAsync(['node', 'xiaobai']);
       expect(output()).toContain('Tools (4)');
     });
   });
@@ -515,7 +515,7 @@ describe('CLI index.ts', () => {
       const inputs = ['/clear', '/exit'];
       let i = 0;
       mockQuestion.mockImplementation((_p, cb) => cb(inputs[i++] ?? '/exit'));
-      await findCmd('chat').parseAsync(['node', 'xiaobai', 'chat']);
+      await findCmd('chat').parseAsync(['node', 'xiaobai']);
       expect(output()).toContain('Session cleared');
     });
   });
@@ -525,7 +525,7 @@ describe('CLI index.ts', () => {
       const inputs = ['/compact', '/exit'];
       let i = 0;
       mockQuestion.mockImplementation((_p, cb) => cb(inputs[i++] ?? '/exit'));
-      await findCmd('chat').parseAsync(['node', 'xiaobai', 'chat']);
+      await findCmd('chat').parseAsync(['node', 'xiaobai']);
       expect(output()).toContain('Compaction is automatic');
     });
   });
@@ -535,7 +535,7 @@ describe('CLI index.ts', () => {
       const inputs = ['/sessions', '/exit'];
       let i = 0;
       mockQuestion.mockImplementation((_p, cb) => cb(inputs[i++] ?? '/exit'));
-      await findCmd('chat').parseAsync(['node', 'xiaobai', 'chat']);
+      await findCmd('chat').parseAsync(['node', 'xiaobai']);
       expect(output()).toContain('s1');
     });
   });
@@ -548,7 +548,7 @@ describe('CLI index.ts', () => {
       const inputs = ['/sessions', '/exit'];
       let i = 0;
       mockQuestion.mockImplementation((_p, cb) => cb(inputs[i++] ?? '/exit'));
-      await findCmd('chat').parseAsync(['node', 'xiaobai', 'chat']);
+      await findCmd('chat').parseAsync(['node', 'xiaobai']);
       expect(output()).toContain('No saved sessions');
     });
   });
@@ -558,7 +558,7 @@ describe('CLI index.ts', () => {
       const inputs = ['/model', '/exit'];
       let i = 0;
       mockQuestion.mockImplementation((_p, cb) => cb(inputs[i++] ?? '/exit'));
-      await findCmd('chat').parseAsync(['node', 'xiaobai', 'chat']);
+      await findCmd('chat').parseAsync(['node', 'xiaobai']);
       expect(output()).toContain('test-provider');
     });
   });
@@ -568,7 +568,7 @@ describe('CLI index.ts', () => {
       const inputs = ['/model openai', '/exit'];
       let i = 0;
       mockQuestion.mockImplementation((_p, cb) => cb(inputs[i++] ?? '/exit'));
-      await findCmd('chat').parseAsync(['node', 'xiaobai', 'chat']);
+      await findCmd('chat').parseAsync(['node', 'xiaobai']);
       expect(output()).toContain('Switched to');
     });
   });
@@ -578,7 +578,7 @@ describe('CLI index.ts', () => {
       const inputs = ['/model openai gpt-4', '/exit'];
       let i = 0;
       mockQuestion.mockImplementation((_p, cb) => cb(inputs[i++] ?? '/exit'));
-      await findCmd('chat').parseAsync(['node', 'xiaobai', 'chat']);
+      await findCmd('chat').parseAsync(['node', 'xiaobai']);
       expect(output()).toContain('Switched to openai/gpt-4');
     });
   });
@@ -588,7 +588,7 @@ describe('CLI index.ts', () => {
       const inputs = ['', '/exit'];
       let i = 0;
       mockQuestion.mockImplementation((_p, cb) => cb(inputs[i++] ?? '/exit'));
-      await findCmd('chat').parseAsync(['node', 'xiaobai', 'chat']);
+      await findCmd('chat').parseAsync(['node', 'xiaobai']);
       expect(output()).toContain('Goodbye');
     });
   });
@@ -605,7 +605,7 @@ describe('CLI index.ts', () => {
       const inputs = ['hello', '/exit'];
       let i = 0;
       mockQuestion.mockImplementation((_p, cb) => cb(inputs[i++] ?? '/exit'));
-      await findCmd('chat').parseAsync(['node', 'xiaobai', 'chat']);
+      await findCmd('chat').parseAsync(['node', 'xiaobai']);
       expect(output()).toContain('AI says hi');
     });
   });
@@ -624,7 +624,7 @@ describe('CLI index.ts', () => {
       const inputs = ['run ls', '/exit'];
       let i = 0;
       mockQuestion.mockImplementation((_p: any, cb: (s: string) => void) => { cb(inputs[i++] ?? '/exit'); });
-      await findCmd('chat').parseAsync(['node', 'xiaobai', 'chat']);
+      await findCmd('chat').parseAsync(['node', 'xiaobai']);
       expect(output()).toContain('bash');
     });
   });
@@ -641,7 +641,7 @@ describe('CLI index.ts', () => {
       const inputs = ['test', '/exit'];
       let i = 0;
       mockQuestion.mockImplementation((_p: any, cb: (s: string) => void) => { cb(inputs[i++] ?? '/exit'); });
-      await findCmd('chat').parseAsync(['node', 'xiaobai', 'chat']);
+      await findCmd('chat').parseAsync(['node', 'xiaobai']);
       expect(output()).toContain('Goodbye');
     });
   });
@@ -658,7 +658,7 @@ describe('CLI index.ts', () => {
       const inputs = ['test', '/exit'];
       let i = 0;
       mockQuestion.mockImplementation((_p, cb) => cb(inputs[i++] ?? '/exit'));
-      await findCmd('chat').parseAsync(['node', 'xiaobai', 'chat']);
+      await findCmd('chat').parseAsync(['node', 'xiaobai']);
       expect(output()).toContain('rate limited');
     });
   });
@@ -673,7 +673,7 @@ describe('CLI index.ts', () => {
       const inputs = ['test', '/exit'];
       let i = 0;
       mockQuestion.mockImplementation((_p, cb) => cb(inputs[i++] ?? '/exit'));
-      await findCmd('chat').parseAsync(['node', 'xiaobai', 'chat']);
+      await findCmd('chat').parseAsync(['node', 'xiaobai']);
       expect(output()).toContain('network fail');
     });
   });
@@ -681,7 +681,7 @@ describe('CLI index.ts', () => {
   describe('chat --auto', () => {
     it('passes auto to PermissionPrompt', async () => {
       mockQuestion.mockImplementation((_p, cb) => cb('/exit'));
-      await findCmd('chat').parseAsync(['node', 'xiaobai', 'chat', '--auto']);
+      await findCmd('chat').parseAsync(['node', 'xiaobai', '--auto']);
       expect(output()).toContain('Goodbye');
     });
   });
@@ -689,7 +689,7 @@ describe('CLI index.ts', () => {
   describe('chat --dashboard', () => {
     it('starts dashboard', async () => {
       mockQuestion.mockImplementation((_p, cb) => cb('/exit'));
-      await findCmd('chat').parseAsync(['node', 'xiaobai', 'chat', '--dashboard']);
+      await findCmd('chat').parseAsync(['node', 'xiaobai', '--dashboard']);
       expect(output()).toContain('Dashboard:');
     });
   });
@@ -698,7 +698,7 @@ describe('CLI index.ts', () => {
     it('shows failure', async () => {
       const { XiaobaiAgent } = await import('../../src/core/agent.js');
       (XiaobaiAgent.create as any).mockRejectedValueOnce(new Error('init fail'));
-      await findCmd('chat').parseAsync(['node', 'xiaobai', 'chat']);
+      await findCmd('chat').parseAsync(['node', 'xiaobai']);
       expect(output()).toContain('Failed to start');
     });
   });
@@ -707,7 +707,7 @@ describe('CLI index.ts', () => {
   // Integration (subprocess)
   // =========================================================================
 
-  describe.skip('integration (subprocess — no coverage)', () => {
+  describe('integration (subprocess)', () => {
     it('has all commands in help', () => {
       const out = runCLI('--help');
       for (const cmd of ['chat', 'exec', 'memory', 'config', 'dashboard', 'run', 'agents', 'skills', 'plugins']) {
