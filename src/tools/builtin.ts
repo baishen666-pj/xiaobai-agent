@@ -1,3 +1,7 @@
+import { fetchTool, searchTool, scrapeTool } from './web.js';
+import { astEditTool } from './ast-edit.js';
+import { codeIndexTool } from './code-index.js';
+
 // NOTE: Tools defined here can be migrated to individual files under src/tools/
 // that call registry.registerSelf() for auto-registration. See registry.ts for details.
 // The getBuiltinTools() function remains the canonical entry point for now.
@@ -772,5 +776,12 @@ export function getBuiltinTools(context?: ToolContextExtended): Tool[] {
     globTool,
     memoryTool(context),
     createAgentTool(context),
+    // Phase 3: Web tools
+    fetchTool,
+    searchTool,
+    scrapeTool,
+    // Phase 3: Code intelligence
+    astEditTool,
+    codeIndexTool,
   ];
 }

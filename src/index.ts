@@ -18,6 +18,9 @@ export { generateTaskPlan, PlannedTaskSchema, TaskPlanSchema, type PlannedTask, 
 export { analyzeFailure, ReflectionOutcomeSchema, type ReflectionOutcome } from './core/reflection.js';
 export { PricingTable, type PricingEntry, type TokenCost } from './core/pricing.js';
 export { TokenTracker, type TokenUsageRecord, type TokenUsageSummary } from './core/token-tracker.js';
+export { fetchTool, searchTool, scrapeTool } from './tools/web.js';
+export { astEditTool } from './tools/ast-edit.js';
+export { CodeIndexer, codeIndexTool, type SymbolDef, type SymbolRef, type CodeIndex, type IndexQuery, type IndexResult } from './tools/code-index.js';
 export { Workspace, type WorkspaceEntry } from './core/workspace.js';
 export { DashboardServer, type DashboardServerOptions } from './server/index.js';
 export { EventBridge } from './server/eventBridge.js';
