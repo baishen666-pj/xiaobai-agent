@@ -10,8 +10,11 @@ import type { SkillSystem } from '../skills/system.js';
 import type { LoopEvent, LoopOptions } from './loop.js';
 import { AgentLoop } from './loop.js';
 import { CredentialPool, type CredentialLease } from './credential-pool.js';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync } from 'node:fs';
+import { readdir as readdirAsync, readFile as readFileAsync } from 'node:fs/promises';
 import { join } from 'node:path';
+import { parseFrontmatter } from '../utils/frontmatter.js';
+import { collectLoopOutput } from '../utils/loop-helpers.js';
 
 const BLOCKED_TOOLS = new Set(['agent', 'memory']);
 const DEFAULT_MAX_DEPTH = 1;
@@ -65,6 +68,8 @@ export class SubAgentEngine {
   private heartbeatTimer?: ReturnType<typeof setInterval>;
 
   private agentDefinitions = new Map<string, SubAgentDefinition>();
+  private definitionsLoaded = false;
+  private definitionsLoading: Promise<void> | null = null;
 
   constructor(deps: {
     provider: ProviderRouter;
@@ -87,7 +92,7 @@ export class SubAgentEngine {
     this.maxDepth = DEFAULT_MAX_DEPTH;
 
     this.startHeartbeat();
-    this.discoverAgentDefinitions();
+    this.definitionsLoading = this.discoverAgentDefinitions();
   }
 
   async spawn(
@@ -140,10 +145,6 @@ export class SubAgentEngine {
     this.children.set(childId, child);
 
     try {
-      let output = '';
-      let tokens = 0;
-      let toolCallCount = 0;
-
       const loopOptions: LoopOptions = {
         maxTurns: definition.maxTurns ?? 20,
         abortSignal: options?.abortSignal,
@@ -154,18 +155,14 @@ export class SubAgentEngine {
         ? `${definition.systemPrompt}\n\nTask: ${prompt}`
         : prompt;
 
-      for await (const event of child.loop.run(fullPrompt, sessionId, loopOptions)) {
-        child.lastHeartbeat = Date.now();
-        child.heartbeatCycles = 0;
-
-        options?.onEvent?.(event);
-
-        if (event.type === 'text') output += event.content;
-        if (event.type === 'tool_result') toolCallCount++;
-        if (event.tokens) tokens += event.tokens;
-
-        if (child.aborted) break;
-      }
+      const { output, tokens, toolCalls: toolCallCount } = await collectLoopOutput(
+        child.loop.run(fullPrompt, sessionId, loopOptions),
+        (event) => {
+          child.lastHeartbeat = Date.now();
+          child.heartbeatCycles = 0;
+          options?.onEvent?.(event);
+        },
+      );
 
       return { output, success: true, tokensUsed: tokens, toolCalls: toolCallCount };
     } catch (error) {
@@ -202,6 +199,12 @@ export class SubAgentEngine {
 
   getDefinition(name: string): SubAgentDefinition | undefined {
     return this.agentDefinitions.get(name);
+  }
+
+  async ensureDefinitionsLoaded(): Promise<void> {
+    if (this.definitionsLoading) {
+      await this.definitionsLoading;
+    }
   }
 
   setMaxDepth(depth: number): void {
@@ -244,7 +247,7 @@ export class SubAgentEngine {
     };
   }
 
-  private discoverAgentDefinitions(): void {
+  private async discoverAgentDefinitions(): Promise<void> {
     const dirs = [
       join(process.cwd(), '.xiaobai', 'agents'),
       join(process.env.HOME ?? process.env.USERPROFILE ?? '~', '.xiaobai', 'agents'),
@@ -253,10 +256,10 @@ export class SubAgentEngine {
     for (const dir of dirs) {
       if (!existsSync(dir)) continue;
       try {
-        const files = readdirSync(dir).filter((f) => f.endsWith('.md'));
+        const files = (await readdirAsync(dir)).filter((f) => f.endsWith('.md'));
         for (const file of files) {
           try {
-            const content = readFileSync(join(dir, file), 'utf-8');
+            const content = await readFileAsync(join(dir, file), 'utf-8');
             const def = this.parseAgentDefinition(content);
             if (def) this.agentDefinitions.set(def.name, def);
           } catch {
@@ -267,28 +270,22 @@ export class SubAgentEngine {
         // Skip unreadable directories
       }
     }
+    this.definitionsLoaded = true;
+    this.definitionsLoading = null;
   }
 
   private parseAgentDefinition(content: string): SubAgentDefinition | null {
-    const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
-    if (!frontmatterMatch) return null;
+    const parsed = parseFrontmatter(content);
+    if (!parsed) return null;
 
-    const [, yaml, body] = frontmatterMatch;
-    const meta: Record<string, string> = {};
-    for (const line of yaml.split('\n')) {
-      const colonIdx = line.indexOf(':');
-      if (colonIdx === -1) continue;
-      const key = line.slice(0, colonIdx).trim();
-      const val = line.slice(colonIdx + 1).trim();
-      meta[key] = val;
-    }
+    const { meta, body } = parsed;
 
     if (!meta.name) return null;
 
     let allowedTools: string[] | undefined;
     let blockedTools: string[] | undefined;
-    try { allowedTools = meta.allowedTools ? JSON.parse(meta.allowedTools) : undefined; } catch {}
-    try { blockedTools = meta.blockedTools ? JSON.parse(meta.blockedTools) : undefined; } catch {}
+    try { allowedTools = meta.allowedTools ? JSON.parse(meta.allowedTools) : undefined; } catch { /* invalid JSON in frontmatter, use default */ }
+    try { blockedTools = meta.blockedTools ? JSON.parse(meta.blockedTools) : undefined; } catch { /* invalid JSON in frontmatter, use default */ }
 
     return {
       name: meta.name,
@@ -297,7 +294,7 @@ export class SubAgentEngine {
       maxDepth: meta.maxDepth ? parseInt(meta.maxDepth, 10) : undefined,
       allowedTools,
       blockedTools,
-      systemPrompt: body.trim(),
+      systemPrompt: body,
     };
   }
 

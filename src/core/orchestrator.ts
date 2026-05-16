@@ -17,6 +17,7 @@ import { analyzeFailure, type ReflectionOutcome } from './reflection.js';
 import type { Message } from '../session/manager.js';
 import type { ChatOptions } from '../provider/types.js';
 import { join } from 'node:path';
+import { EventEmitter } from 'node:events';
 
 export type OrchestratorEvent =
   | { type: 'plan'; tasks: Task[] }
@@ -66,6 +67,9 @@ export class Orchestrator {
   private maxDepth: number;
   private taskTimeoutMs: number;
   private source: SessionSource;
+  private scheduler = new EventEmitter();
+  private taskDone: Promise<void> | null = null;
+  private resolveTaskDone: (() => void) | null = null;
 
   constructor(deps: AgentDeps, workspaceDir?: string) {
     this.deps = deps;
@@ -170,6 +174,12 @@ export class Orchestrator {
 
     const inflight: Promise<void>[] = [];
 
+    const waitForTask = (): Promise<void> => {
+      return new Promise((resolve) => {
+        this.scheduler.once('task_settled', resolve);
+      });
+    };
+
     while (true) {
       if (abortSignal?.aborted) {
         for (const task of this.tasks) {
@@ -199,12 +209,16 @@ export class Orchestrator {
 
         const p = this.runTask(handle, task, options).catch((err) => {
           console.error(`[orchestrator] Task ${task.id} failed:`, err);
+        }).finally(() => {
+          this.scheduler.emit('task_settled');
         });
         inflight.push(p);
         launched++;
       }
 
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      if (launched === 0 && this.tasks.some(isRunning)) {
+        await waitForTask();
+      }
     }
 
     await Promise.all(inflight);
@@ -300,7 +314,7 @@ export class Orchestrator {
         this.emit({ type: 'task_failed', task, error: errorMsg });
       } else {
         task.status = 'pending';
-        this.applyReflection(task, errorMsg, output).catch(() => {});
+        this.applyReflection(task, errorMsg, output).catch((err) => { console.error('[orchestrator] Reflection failed:', err); });
       }
     } finally {
       handle.busy = false;

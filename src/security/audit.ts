@@ -77,7 +77,7 @@ export class SecurityAudit {
       } else {
         this.addFinding('info', 'filesystem', 'Config directory permissions are restrictive');
       }
-    } catch {}
+    } catch (err) { console.error('[audit] Operation failed:', err); }
   }
 
   private checkSecretDetection(): void {
@@ -107,7 +107,7 @@ export class SecurityAudit {
             break;
           }
         }
-      } catch {}
+      } catch (err) { console.error('[audit] Operation failed:', err); }
     }
   }
 
@@ -157,7 +157,7 @@ export class SecurityAudit {
             'Consider blocking shell execution tools in production',
           );
         }
-      } catch {}
+      } catch (err) { console.error('[audit] Operation failed:', err); }
     } else {
       this.addFinding(
         'info',

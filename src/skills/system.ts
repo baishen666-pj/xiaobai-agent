@@ -1,6 +1,8 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, copyFileSync, watchFile, unwatchFile } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, copyFileSync, watchFile, unwatchFile } from 'node:fs';
+import { readFile as readFileAsync, readdir as readdirAsync } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parseFrontmatter } from '../utils/frontmatter.js';
 
 export interface Skill {
   name: string;
@@ -54,10 +56,10 @@ export class SkillSystem {
 
     if (!existsSync(this.skillsDir)) return;
 
-    const entries = readdirSync(this.skillsDir, { withFileTypes: true });
+    const entries = await readdirAsync(this.skillsDir, { withFileTypes: true });
     for (const entry of entries) {
       if (!entry.isDirectory() || entry.name.startsWith('.') || entry.name.startsWith('_')) continue;
-      const skill = this.loadSkillFromDir(join(this.skillsDir, entry.name));
+      const skill = await this.loadSkillFromDir(join(this.skillsDir, entry.name));
       if (skill) this.skills.set(skill.name, skill);
     }
 
@@ -89,25 +91,28 @@ export class SkillSystem {
 
   stopWatching(): void {
     for (const [name] of this.watchers) {
-      try { unwatchFile(join(this.skillsDir, name)); } catch {}
+      try { unwatchFile(join(this.skillsDir, name)); } catch { /* file may not exist */ }
     }
     this.watchers.clear();
   }
 
-  private loadSkillFromDir(dir: string): Skill | null {
+  private async loadSkillFromDir(dir: string): Promise<Skill | null> {
     const skillPath = join(dir, 'SKILL.md');
     if (!existsSync(skillPath)) return null;
 
-    const content = readFileSync(skillPath, 'utf-8');
-    const skill = this.parseSkillMd(content, dir);
-    if (skill.name !== 'unnamed' && this.isBuiltin(skill.name)) {
-      skill.source = 'builtin';
+    try {
+      const content = await readFileAsync(skillPath, 'utf-8');
+      const skill = this.parseSkillMd(content, dir);
+      if (skill.name !== 'unnamed' && this.isBuiltin(skill.name)) {
+        skill.source = 'builtin';
+      }
+      return skill;
+    } catch {
+      return null;
     }
-    return skill;
   }
 
   private parseSkillMd(content: string, _dir?: string): Skill {
-    const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
     const defaultSkill: Skill = {
       name: 'unnamed',
       description: '',
@@ -116,23 +121,17 @@ export class SkillSystem {
       version: '1.0.0',
     };
 
-    if (!frontmatterMatch) return defaultSkill;
+    const parsed = parseFrontmatter(content);
+    if (!parsed) return defaultSkill;
 
-    const fm = frontmatterMatch[1];
-    const body = frontmatterMatch[2];
+    const { meta, body } = parsed;
 
-    const getFmValue = (key: string): string | undefined => {
-      const match = fm.match(new RegExp(`^${key}:\\s*(.+)$`, 'm'));
-      return match?.[1]?.trim();
-    };
+    const getFmValue = (key: string): string | undefined => meta[key];
 
     const getFmArray = (key: string): string[] | undefined => {
-      const section = fm.match(new RegExp(`^${key}:\\s*\\n((?:\\s+-\\s+.+\\n?)*)`, 'm'));
-      if (!section) return undefined;
-      return section[1]
-        .split('\n')
-        .map((l) => l.replace(/^\s+-\s+/, '').trim())
-        .filter(Boolean);
+      const val = meta[key];
+      if (!val) return undefined;
+      return val.split(',').map((s) => s.trim()).filter(Boolean);
     };
 
     return {
@@ -143,7 +142,7 @@ export class SkillSystem {
       version: getFmValue('version') ?? '1.0.0',
       author: getFmValue('author'),
       requires: getFmArray('requires') ? { env: getFmArray('requires') } : undefined,
-      content: body.trim(),
+      content: body,
     };
   }
 

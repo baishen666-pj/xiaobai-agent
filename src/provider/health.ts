@@ -113,9 +113,9 @@ export class ProviderHealthChecker {
 
   startMonitoring(): void {
     this.stopMonitoring();
-    this.checkAll().catch(() => {});
+    this.checkAll().catch((err) => { console.error('[health] Check failed:', err); });
     this.timer = setInterval(() => {
-      this.checkAll().catch(() => {});
+      this.checkAll().catch((err) => { console.error('[health] Check failed:', err); });
     }, this.config.intervalMs);
   }
 

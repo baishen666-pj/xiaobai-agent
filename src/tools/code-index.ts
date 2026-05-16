@@ -1,5 +1,6 @@
-import { existsSync, readFileSync, statSync, readdirSync } from 'node:fs';
-import { join, extname, relative } from 'node:path';
+import { existsSync } from 'node:fs';
+import { readFile, writeFile, stat, readdir } from 'node:fs/promises';
+import { join, extname, relative, resolve as pathResolve } from 'node:path';
 import type { Tool, ToolContext, ToolResult } from './registry.js';
 
 export interface SymbolDef {
@@ -26,6 +27,15 @@ export interface CodeIndex {
   files: Map<string, { lastModified: number; symbolCount: number }>;
   createdAt: number;
   updatedAt: number;
+}
+
+export interface SerializedIndex {
+  symbols: Array<[string, SymbolDef[]]>;
+  references: Array<[string, SymbolRef[]]>;
+  files: Array<[string, { lastModified: number; symbolCount: number }]>;
+  createdAt: number;
+  updatedAt: number;
+  rootDir: string;
 }
 
 export interface IndexQuery {
@@ -58,10 +68,12 @@ const SYMBOL_PATTERNS: Array<{ kind: SymbolDef['kind']; pattern: RegExp; group: 
   { kind: 'method', pattern: /(?:public|private|protected)?\s*(?:async\s+)?(\w+)\s*\(/g, group: 1 },
 ];
 
+const CACHE_FILE = '.xiaobai-index.json';
+const MAX_CACHE_AGE_MS = 30 * 60 * 1000; // 30 minutes
+
 export class CodeIndexer {
   private index: CodeIndex;
   private rootDir: string;
-  private watchers = new Map<string, () => void>();
 
   constructor(rootDir: string) {
     this.rootDir = rootDir;
@@ -75,15 +87,33 @@ export class CodeIndexer {
   }
 
   async buildIndex(dirs?: string[]): Promise<{ files: number; symbols: number; references: number }> {
+    const loaded = await this.loadCachedIndex();
     const targetDirs = dirs ?? [this.rootDir];
     let totalFiles = 0;
     let totalSymbols = 0;
     let totalRefs = 0;
 
     for (const dir of targetDirs) {
-      const files = this.walkDir(dir);
+      const files = await this.walkDir(dir);
       for (const filePath of files) {
-        const result = this.indexFile(filePath);
+        const relPath = relative(this.rootDir, filePath);
+        let fileStat;
+        try {
+          fileStat = await stat(filePath);
+        } catch {
+          continue;
+        }
+
+        const cached = this.index.files.get(relPath);
+        if (cached && cached.lastModified === fileStat.mtimeMs && loaded) {
+          totalFiles++;
+          continue; // skip unchanged files
+        }
+
+        // Remove stale data for this file before re-indexing
+        this.removeFileFromIndex(relPath);
+
+        const result = await this.indexFile(filePath);
         totalSymbols += result.symbols;
         totalRefs += result.references;
         totalFiles++;
@@ -91,6 +121,7 @@ export class CodeIndexer {
     }
 
     this.index.updatedAt = Date.now();
+    await this.saveCachedIndex();
 
     return {
       files: totalFiles,
@@ -145,10 +176,68 @@ export class CodeIndexer {
     };
   }
 
-  private indexFile(filePath: string): { symbols: number; references: number } {
+  private removeFileFromIndex(relPath: string): void {
+    for (const [name, defs] of this.index.symbols) {
+      const filtered = defs.filter((d) => d.filePath !== relPath);
+      if (filtered.length === 0) this.index.symbols.delete(name);
+      else if (filtered.length < defs.length) this.index.symbols.set(name, filtered);
+    }
+    for (const [name, refs] of this.index.references) {
+      const filtered = refs.filter((r) => r.filePath !== relPath);
+      if (filtered.length === 0) this.index.references.delete(name);
+      else if (filtered.length < refs.length) this.index.references.set(name, filtered);
+    }
+    this.index.files.delete(relPath);
+  }
+
+  private async loadCachedIndex(): Promise<boolean> {
+    const cachePath = join(this.rootDir, CACHE_FILE);
+    if (!existsSync(cachePath)) return false;
+    try {
+      const raw = await readFile(cachePath, 'utf-8');
+      const data: SerializedIndex = JSON.parse(raw);
+      if (data.rootDir !== this.rootDir) return false;
+      if (Date.now() - data.updatedAt > MAX_CACHE_AGE_MS) return false;
+      this.index = {
+        symbols: new Map(data.symbols),
+        references: new Map(data.references),
+        files: new Map(data.files),
+        createdAt: data.createdAt,
+        updatedAt: data.updatedAt,
+      };
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private async saveCachedIndex(): Promise<void> {
+    const cachePath = join(this.rootDir, CACHE_FILE);
+    const data: SerializedIndex = {
+      symbols: [...this.index.symbols.entries()],
+      references: [...this.index.references.entries()],
+      files: [...this.index.files.entries()],
+      createdAt: this.index.createdAt,
+      updatedAt: this.index.updatedAt,
+      rootDir: this.rootDir,
+    };
+    try {
+      await writeFile(cachePath, JSON.stringify(data), 'utf-8');
+    } catch {
+      // cache write failure is non-critical
+    }
+  }
+
+  private async indexFile(filePath: string): Promise<{ symbols: number; references: number }> {
     const relPath = relative(this.rootDir, filePath);
-    const stat = statSync(filePath);
-    const source = readFileSync(filePath, 'utf-8');
+    let fileStat;
+    let source: string;
+    try {
+      fileStat = await stat(filePath);
+      source = await readFile(filePath, 'utf-8');
+    } catch {
+      return { symbols: 0, references: 0 };
+    }
     const lines = source.split('\n');
 
     let symbolCount = 0;
@@ -175,10 +264,12 @@ export class CodeIndexer {
           exported: isExported,
         };
 
-        const existing = this.index.symbols.get(name) ?? [];
-        // Avoid duplicates
-        if (!existing.some((d) => d.filePath === relPath && d.line === pos.line)) {
-          this.index.symbols.set(name, [...existing, def]);
+        const existing = this.index.symbols.get(name);
+        if (!existing) {
+          this.index.symbols.set(name, [def]);
+          symbolCount++;
+        } else if (!existing.some((d) => d.filePath === relPath && d.line === pos.line)) {
+          existing.push(def);
           symbolCount++;
         }
       }
@@ -190,7 +281,6 @@ export class CodeIndexer {
     while ((importMatch = importPattern.exec(source)) !== null) {
       const namedImports = importMatch[1];
       const defaultImport = importMatch[2];
-      const modulePath = importMatch[3];
       const pos = this.getLineCol(source, importMatch.index);
 
       const names: string[] = [];
@@ -211,8 +301,12 @@ export class CodeIndexer {
           kind: 'import',
         };
 
-        const existing = this.index.references.get(name) ?? [];
-        this.index.references.set(name, [...existing, ref]);
+        const existing = this.index.references.get(name);
+        if (existing) {
+          existing.push(ref);
+        } else {
+          this.index.references.set(name, [ref]);
+        }
         refCount++;
       }
     }
@@ -243,13 +337,17 @@ export class CodeIndexer {
         kind: 'usage',
       };
 
-      const existing = this.index.references.get(name) ?? [];
-      this.index.references.set(name, [...existing, ref]);
+      const existing = this.index.references.get(name);
+      if (existing) {
+        existing.push(ref);
+      } else {
+        this.index.references.set(name, [ref]);
+      }
       refCount++;
     }
 
     this.index.files.set(relPath, {
-      lastModified: stat.mtimeMs,
+      lastModified: fileStat.mtimeMs,
       symbolCount,
     });
 
@@ -274,7 +372,7 @@ export class CodeIndexer {
 
   private queryCallees(filePath: string, limit: number = 50): SymbolRef[] {
     const refs: SymbolRef[] = [];
-    for (const [name, nameRefs] of this.index.references) {
+    for (const [, nameRefs] of this.index.references) {
       for (const ref of nameRefs) {
         if (ref.filePath === filePath) {
           refs.push(ref);
@@ -314,17 +412,17 @@ export class CodeIndexer {
     return results.sort((a, b) => a.line - b.line).slice(0, limit);
   }
 
-  private walkDir(dir: string): string[] {
+  private async walkDir(dir: string): Promise<string[]> {
     const files: string[] = [];
     const skipDirs = new Set(['node_modules', '.git', 'dist', 'build', 'coverage', '.next', '.nuxt', 'target', '__pycache__', '.venv', 'venv']);
 
     try {
-      const entries = readdirSync(dir, { withFileTypes: true });
+      const entries = await readdir(dir, { withFileTypes: true });
       for (const entry of entries) {
         const fullPath = join(dir, entry.name);
         if (entry.isDirectory()) {
           if (!skipDirs.has(entry.name) && !entry.name.startsWith('.')) {
-            files.push(...this.walkDir(fullPath));
+            files.push(...await this.walkDir(fullPath));
           }
         } else if (entry.isFile()) {
           const ext = extname(entry.name);
@@ -407,8 +505,7 @@ export const codeIndexTool: Tool = {
           if (!root_dir) {
             return { output: 'build requires root_dir', success: false, error: 'missing_params' };
           }
-          const { resolve } = await import('node:path');
-          const absRoot = resolve(root_dir);
+          const absRoot = pathResolve(root_dir);
           if (!existsSync(absRoot)) {
             return { output: `Directory not found: ${absRoot}`, success: false, error: 'dir_not_found' };
           }
@@ -425,8 +522,7 @@ export const codeIndexTool: Tool = {
           if (!query_type || !name) {
             return { output: 'query requires query_type and name', success: false, error: 'missing_params' };
           }
-          const { resolve } = await import('node:path');
-          const absRoot = root_dir ? resolve(root_dir) : process.cwd();
+          const absRoot = root_dir ? pathResolve(root_dir) : process.cwd();
           const indexer = new CodeIndexer(absRoot);
           await indexer.buildIndex();
           const result = indexer.query({
@@ -451,8 +547,7 @@ export const codeIndexTool: Tool = {
         }
 
         case 'stats': {
-          const { resolve } = await import('node:path');
-          const absRoot = root_dir ? resolve(root_dir) : process.cwd();
+          const absRoot = root_dir ? pathResolve(root_dir) : process.cwd();
           const indexer = new CodeIndexer(absRoot);
           await indexer.buildIndex();
           const stats = indexer.getStats();
@@ -467,8 +562,7 @@ export const codeIndexTool: Tool = {
           if (!file_path) {
             return { output: 'outline requires file_path', success: false, error: 'missing_params' };
           }
-          const { resolve } = await import('node:path');
-          const absRoot = root_dir ? resolve(root_dir) : process.cwd();
+          const absRoot = root_dir ? pathResolve(root_dir) : process.cwd();
           const indexer = new CodeIndexer(absRoot);
           await indexer.buildIndex();
           const result = indexer.query({ type: 'outline', filePath: file_path, limit });

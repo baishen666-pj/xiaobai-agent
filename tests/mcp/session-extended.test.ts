@@ -1134,17 +1134,17 @@ describe('MCPSession — connectAll', () => {
 
     const connectPromise = session.connectAll();
 
-    // Wait for first spawn
-    await vi.waitFor(() => expect(spawnMock.mock.calls.length).toBeGreaterThanOrEqual(1));
-    const proc1 = currentMockProcess;
-    const initReq1 = getFirstRequestOnProcess(proc1);
-    respondOnProcess(proc1, initReq1!.id as number, { capabilities: {} });
-
-    // Wait for second spawn (connectAll is sequential)
+    // Wait for both spawns (connectAll is now parallel)
     await vi.waitFor(() => expect(spawnMock.mock.calls.length).toBeGreaterThanOrEqual(2));
-    const proc2 = currentMockProcess;
-    const initReq2 = getFirstRequestOnProcess(proc2);
-    respondOnProcess(proc2, initReq2!.id as number, { capabilities: {} });
+
+    // Respond to both init requests
+    for (let i = 0; i < 2; i++) {
+      const proc = spawnMock.mock.results[i]?.value;
+      if (proc) {
+        const initReq = getFirstRequestOnProcess(proc);
+        if (initReq) respondOnProcess(proc, initReq.id as number, { capabilities: {} });
+      }
+    }
 
     const results = await connectPromise;
     // s3 is disabled, only s1 and s2 should be attempted

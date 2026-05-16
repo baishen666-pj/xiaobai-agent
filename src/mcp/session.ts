@@ -31,6 +31,8 @@ interface JsonRpcResponse {
   error?: { code: number; message: string; data?: unknown };
 }
 
+const MAX_PENDING_REQUESTS = 1000;
+
 export class MCPSession {
   private configDir: string;
   private servers = new Map<string, MCPServerConfig>();
@@ -112,9 +114,17 @@ export class MCPSession {
     const enabled = this.getEnabledServers();
     const results = new Map<string, MCPConnection>();
 
-    for (const server of enabled) {
-      const conn = await this.connect(server.name);
-      if (conn) results.set(server.name, conn);
+    const settled = await Promise.allSettled(
+      enabled.map(async (server) => {
+        const conn = await this.connect(server.name);
+        return { name: server.name, conn };
+      }),
+    );
+
+    for (const result of settled) {
+      if (result.status === 'fulfilled' && result.value.conn) {
+        results.set(result.value.name, result.value.conn);
+      }
     }
 
     return results;
@@ -235,7 +245,7 @@ export class MCPConnection {
   protected config: MCPServerConfig;
   protected process: ChildProcess | null = null;
   protected requestId = 0;
-  protected pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
+  protected pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>();
   protected buffer = '';
   protected alive = false;
   protected capabilities: Record<string, unknown> = {};
@@ -265,6 +275,7 @@ export class MCPConnection {
       this.process.on('close', () => {
         this.alive = false;
         for (const [, pending] of this.pending) {
+          clearTimeout(pending.timer);
           pending.reject(new Error('Connection closed'));
         }
         this.pending.clear();
@@ -324,19 +335,24 @@ export class MCPConnection {
   protected sendRequest(method: string, params: Record<string, unknown>): Promise<unknown> {
     return new Promise((resolve, reject) => {
       const id = ++this.requestId;
+
+      if (this.pending.size >= MAX_PENDING_REQUESTS) {
+        reject(new Error(`Too many pending requests (${this.pending.size})`));
+        return;
+      }
+
       const request: JsonRpcRequest = { jsonrpc: '2.0', id, method, params };
-
-      this.pending.set(id, { resolve, reject });
-
-      const message = `Content-Length: ${Buffer.byteLength(JSON.stringify(request))}\r\n\r\n${JSON.stringify(request)}`;
-      this.process?.stdin?.write(message);
-
-      setTimeout(() => {
+      const timer = setTimeout(() => {
         if (this.pending.has(id)) {
           this.pending.delete(id);
           reject(new Error(`Request timeout: ${method}`));
         }
       }, 30000);
+
+      this.pending.set(id, { resolve, reject, timer });
+
+      const message = `Content-Length: ${Buffer.byteLength(JSON.stringify(request))}\r\n\r\n${JSON.stringify(request)}`;
+      this.process?.stdin?.write(message);
     });
   }
 
@@ -370,6 +386,7 @@ export class MCPConnection {
         const response = JSON.parse(messageStr) as JsonRpcResponse;
         const pending = this.pending.get(response.id);
         if (pending) {
+          clearTimeout(pending.timer);
           this.pending.delete(response.id);
           if (response.error) {
             pending.reject(new Error(response.error.message));
@@ -468,6 +485,7 @@ class MCPSSEConnection extends MCPConnection {
   private handleSSEMessage(response: JsonRpcResponse): void {
     const handler = this.pending.get(response.id);
     if (handler) {
+      clearTimeout(handler.timer);
       this.pending.delete(response.id);
       if (response.error) {
         handler.reject(new Error(response.error.message));

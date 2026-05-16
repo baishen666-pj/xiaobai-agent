@@ -161,7 +161,7 @@ describe('SubAgentEngine - construction', () => {
     expect((engine as any).maxDepth).toBe(1);
   });
 
-  it('discovers agent definitions from disk on construction', () => {
+  it('discovers agent definitions from disk on construction', async () => {
     const agentsDir = join(tempDir, '.xiaobai', 'agents');
     mkdirSync(agentsDir, { recursive: true });
     writeFileSync(join(agentsDir, 'test-agent.md'), `---\nname: tester\nmodel: sonnet\n---\nYou are a tester.`);
@@ -169,6 +169,7 @@ describe('SubAgentEngine - construction', () => {
     vi.spyOn(process, 'cwd').mockReturnValue(tempDir);
     try {
       engine = createEngine();
+      await engine.ensureDefinitionsLoaded();
       expect(engine.getAvailableDefinitions()).toContain('tester');
     } finally {
       vi.spyOn(process, 'cwd').mockRestore();
@@ -486,7 +487,7 @@ You are a full agent with all options.`;
 // discoverAgentDefinitions
 // ---------------------------------------------------------------------------
 describe('SubAgentEngine - discoverAgentDefinitions', () => {
-  it('skips non-.md files in agents directory', () => {
+  it('skips non-.md files in agents directory', async () => {
     const agentsDir = join(tempDir, '.xiaobai', 'agents');
     mkdirSync(agentsDir, { recursive: true });
     writeFileSync(join(agentsDir, 'readme.txt'), 'Not an agent definition');
@@ -497,6 +498,7 @@ describe('SubAgentEngine - discoverAgentDefinitions', () => {
     vi.spyOn(process, 'cwd').mockReturnValue(tempDir);
     try {
       engine = createEngine();
+      await engine.ensureDefinitionsLoaded();
       const defs = engine.getAvailableDefinitions();
       expect(defs).toContain('valid-one');
       expect(defs).not.toContain('readme');
@@ -505,7 +507,7 @@ describe('SubAgentEngine - discoverAgentDefinitions', () => {
     }
   });
 
-  it('handles multiple agent definitions', () => {
+  it('handles multiple agent definitions', async () => {
     const agentsDir = join(tempDir, '.xiaobai', 'agents');
     mkdirSync(agentsDir, { recursive: true });
     writeFileSync(join(agentsDir, 'agent-a.md'), `---\nname: alpha\n---\nAlpha agent.`);
@@ -515,6 +517,7 @@ describe('SubAgentEngine - discoverAgentDefinitions', () => {
     vi.spyOn(process, 'cwd').mockReturnValue(tempDir);
     try {
       engine = createEngine();
+      await engine.ensureDefinitionsLoaded();
       const defs = engine.getAvailableDefinitions();
       expect(defs).toContain('alpha');
       expect(defs).toContain('beta');

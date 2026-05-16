@@ -66,7 +66,7 @@ export class DashboardServer {
           if (msg.type === 'ping') {
             ws.send(JSON.stringify({ type: 'pong', timestamp: Date.now() }));
           }
-        } catch {}
+        } catch (err) { console.error('[server] Error:', err); }
       });
     });
   }
@@ -103,7 +103,7 @@ export class DashboardServer {
           res.writeHead(200, { 'Content-Type': 'text/html' });
           res.end(indexData);
           return;
-        } catch {}
+        } catch (err) { console.error('[server] Error:', err); }
       }
       res.writeHead(404);
       res.end();
