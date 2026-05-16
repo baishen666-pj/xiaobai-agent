@@ -9,6 +9,14 @@ vi.mock('openai', () => {
     },
   };
 
+  const mockToolStream = {
+    async *[Symbol.asyncIterator]() {
+      yield { choices: [{ delta: { content: 'Let me', tool_calls: [{ id: 'tc1', function: { name: 'read', arguments: '' } }] } }] };
+      yield { choices: [{ delta: { tool_calls: [{ function: { arguments: '{"file":"test.txt"}' } }] } }] };
+      yield { choices: [{ delta: {}, finish_reason: 'tool_calls' }], usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } };
+    },
+  };
+
   const mockCompletions = {
     create: vi.fn().mockResolvedValue({
       choices: [{
@@ -35,6 +43,8 @@ vi.mock('openai', () => {
     default: vi.fn().mockImplementation(() => ({
       chat: { completions: mockCompletions },
     })),
+    __mockStream: mockStream,
+    __mockToolStream: mockToolStream,
   };
 });
 
@@ -125,6 +135,22 @@ describe('OpenAICompatibleProvider', () => {
       expect(chunks.some((c) => c.type === 'done')).toBe(true);
       expect(chunks.some((c) => c.type === 'usage')).toBe(true);
     });
+
+    it('yields tool_call events', async () => {
+      const { default: MockOpenAI, __mockToolStream } = await import('openai') as any;
+      const instance = new MockOpenAI();
+      instance.chat.completions.create.mockImplementation(async (opts: any) => {
+        if (opts.stream) return __mockToolStream;
+        return { choices: [{ message: { content: 'ok' } }], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } };
+      });
+
+      const chunks: any[] = [];
+      for await (const chunk of provider.chatStream!(makeMessages(), 'gpt-4', defaultOptions)) {
+        chunks.push(chunk);
+      }
+      expect(chunks.some((c) => c.type === 'tool_call_start')).toBe(true);
+      expect(chunks.some((c) => c.type === 'tool_call_delta')).toBe(true);
+    });
   });
 
   describe('formatMessages', () => {
@@ -154,6 +180,65 @@ describe('OpenAICompatibleProvider', () => {
       ];
       const result = await provider.chat(messages, 'gpt-4', defaultOptions);
       expect(result).toBeDefined();
+    });
+
+    it('handles assistant toolCalls with string arguments', async () => {
+      const messages: Message[] = [
+        { role: 'assistant', content: '', toolCalls: [{ id: 'tc1', name: 'run', arguments: '{"cmd":"ls"}' }], timestamp: Date.now() },
+      ];
+      const result = await provider.chat(messages, 'gpt-4', defaultOptions);
+      expect(result).toBeDefined();
+    });
+
+    it('handles assistant without toolCalls', async () => {
+      const messages: Message[] = [
+        { role: 'assistant', content: 'Just text', timestamp: Date.now() },
+      ];
+      const result = await provider.chat(messages, 'gpt-4', defaultOptions);
+      expect(result).toBeDefined();
+    });
+  });
+
+  describe('chat edge cases', () => {
+    it('handles empty choices', async () => {
+      const { default: MockOpenAI } = await import('openai');
+      const instance = new MockOpenAI();
+      instance.chat.completions.create.mockResolvedValueOnce({
+        choices: [],
+        usage: null,
+      });
+
+      const result = await provider.chat(makeMessages(), 'gpt-4', defaultOptions);
+      expect(result.content).toBe('');
+    });
+
+    it('handles null usage', async () => {
+      const { default: MockOpenAI } = await import('openai');
+      const instance = new MockOpenAI();
+      instance.chat.completions.create.mockResolvedValueOnce({
+        choices: [{ message: { content: 'ok' }, finish_reason: 'stop' }],
+        usage: null,
+      });
+
+      const result = await provider.chat(makeMessages(), 'gpt-4', defaultOptions);
+      expect(result.content).toBe('ok');
+      expect(result.usage).toBeUndefined();
+    });
+
+    it('passes tools and tool_choice to API', async () => {
+      const { default: MockOpenAI } = await import('openai');
+      const instance = new MockOpenAI();
+      instance.chat.completions.create.mockResolvedValueOnce({
+        choices: [{ message: { content: 'done' }, finish_reason: 'stop' }],
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+      });
+
+      await provider.chat(makeMessages(), 'gpt-4', {
+        ...defaultOptions,
+        tools: [{ name: 'read', description: 'Read', parameters: { type: 'object', properties: {} } }],
+        response_format: { type: 'json_object' },
+      });
+      expect(instance.chat.completions.create).toHaveBeenCalled();
     });
   });
 });

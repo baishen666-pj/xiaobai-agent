@@ -84,6 +84,128 @@ describe('AnthropicProvider', () => {
       expect(chunks.some((c) => c.type === 'text_delta')).toBe(true);
       expect(chunks.some((c) => c.type === 'done')).toBe(true);
     });
+
+    it('yields tool_call events', async () => {
+      const { default: MockAnthropic } = await import('@anthropic-ai/sdk');
+      const instance = new MockAnthropic();
+      instance.messages.stream.mockReturnValue({
+        async *[Symbol.asyncIterator]() {
+          yield { type: 'content_block_start', content_block: { type: 'tool_use', id: 'tc_1', name: 'read_file' } };
+          yield { type: 'content_block_delta', delta: { type: 'input_json_delta', partial_json: '{"file":' } };
+          yield { type: 'content_block_delta', delta: { type: 'input_json_delta', partial_json: '"/test"}' } };
+          yield { type: 'message_delta', usage: { output_tokens: 20 }, delta: { stop_reason: 'tool_use' } };
+        },
+      });
+
+      const chunks: any[] = [];
+      for await (const chunk of provider.chatStream!(makeMessages(), 'claude-3-opus', defaultOptions)) {
+        chunks.push(chunk);
+      }
+      expect(chunks.some((c) => c.type === 'tool_call_start')).toBe(true);
+      expect(chunks.some((c) => c.type === 'tool_call_delta')).toBe(true);
+      expect(chunks.some((c) => c.type === 'done')).toBe(true);
+    });
+
+    it('handles message_start without usage', async () => {
+      const { default: MockAnthropic } = await import('@anthropic-ai/sdk');
+      const instance = new MockAnthropic();
+      instance.messages.stream.mockReturnValue({
+        async *[Symbol.asyncIterator]() {
+          yield { type: 'message_start', message: {} };
+          yield { type: 'content_block_delta', delta: { type: 'text_delta', text: 'test' } };
+          yield { type: 'message_delta', delta: { stop_reason: 'end_turn' } };
+        },
+      });
+
+      const chunks: any[] = [];
+      for await (const chunk of provider.chatStream!(makeMessages(), 'claude-3-opus', defaultOptions)) {
+        chunks.push(chunk);
+      }
+      expect(chunks.some((c) => c.type === 'text_delta')).toBe(true);
+    });
+
+    it('handles message_delta without usage', async () => {
+      const { default: MockAnthropic } = await import('@anthropic-ai/sdk');
+      const instance = new MockAnthropic();
+      instance.messages.stream.mockReturnValue({
+        async *[Symbol.asyncIterator]() {
+          yield { type: 'message_start', message: { usage: { input_tokens: 5 } } };
+          yield { type: 'content_block_delta', delta: { type: 'text_delta', text: 'ok' } };
+          yield { type: 'message_delta', delta: { stop_reason: 'end_turn' } };
+        },
+      });
+
+      const chunks: any[] = [];
+      for await (const chunk of provider.chatStream!(makeMessages(), 'claude-3-opus', defaultOptions)) {
+        chunks.push(chunk);
+      }
+      expect(chunks.some((c) => c.type === 'done')).toBe(true);
+    });
+
+    it('passes tools and tool_choice to stream', async () => {
+      const { default: MockAnthropic } = await import('@anthropic-ai/sdk');
+      const instance = new MockAnthropic();
+      instance.messages.stream.mockReturnValue({
+        async *[Symbol.asyncIterator]() {
+          yield { type: 'content_block_delta', delta: { type: 'text_delta', text: 'ok' } };
+          yield { type: 'message_delta', delta: { stop_reason: 'end_turn' } };
+        },
+      });
+
+      const chunks: any[] = [];
+      for await (const chunk of provider.chatStream!(makeMessages(), 'claude-3-opus', {
+        ...defaultOptions,
+        tools: [{ name: 'read', description: 'Read', parameters: { type: 'object', properties: {} } }],
+        tool_choice: { type: 'auto' },
+      })) {
+        chunks.push(chunk);
+      }
+      expect(instance.messages.stream).toHaveBeenCalledWith(
+        expect.objectContaining({ tool_choice: { type: 'auto' } }),
+        expect.anything(),
+      );
+    });
+
+    it('works without maxTokens and system', async () => {
+      const { default: MockAnthropic } = await import('@anthropic-ai/sdk');
+      const instance = new MockAnthropic();
+      instance.messages.stream.mockReturnValue({
+        async *[Symbol.asyncIterator]() {
+          yield { type: 'content_block_delta', delta: { type: 'text_delta', text: 'ok' } };
+          yield { type: 'message_delta', delta: { stop_reason: 'end_turn' } };
+        },
+      });
+
+      const chunks: any[] = [];
+      for await (const chunk of provider.chatStream!(makeMessages(), 'claude-3-opus', {
+        tools: [],
+      })) {
+        chunks.push(chunk);
+      }
+      expect(chunks.length).toBeGreaterThan(0);
+    });
+
+    it('handles tool_result messages in stream formatMessages', async () => {
+      const { default: MockAnthropic } = await import('@anthropic-ai/sdk');
+      const instance = new MockAnthropic();
+      instance.messages.stream.mockReturnValue({
+        async *[Symbol.asyncIterator]() {
+          yield { type: 'content_block_delta', delta: { type: 'text_delta', text: 'ok' } };
+          yield { type: 'message_delta', delta: { stop_reason: 'end_turn' } };
+        },
+      });
+
+      const messages: Message[] = [
+        { role: 'assistant', content: '', toolCalls: [{ id: 'tc1', name: 'read', arguments: {} }], timestamp: Date.now() },
+        { role: 'tool_result', toolCallId: 'tc1', content: 'result', timestamp: Date.now() },
+      ];
+
+      const chunks: any[] = [];
+      for await (const chunk of provider.chatStream!(messages, 'claude-3-opus', defaultOptions)) {
+        chunks.push(chunk);
+      }
+      expect(chunks.length).toBeGreaterThan(0);
+    });
   });
 
   describe('formatMessages', () => {
@@ -104,6 +226,74 @@ describe('AnthropicProvider', () => {
       ];
       const result = await provider.chat(messages, 'claude-3-opus', defaultOptions);
       expect(result).toBeDefined();
+    });
+
+    it('handles tool_result after non-assistant message', async () => {
+      const messages: Message[] = [
+        { role: 'user', content: 'hi', timestamp: Date.now() },
+        { role: 'tool_result', toolCallId: 'tc1', content: 'result', timestamp: Date.now() },
+      ];
+      const result = await provider.chat(messages, 'claude-3-opus', defaultOptions);
+      expect(result).toBeDefined();
+    });
+
+    it('handles assistant with toolCalls and content', async () => {
+      const messages: Message[] = [
+        { role: 'assistant', content: 'Thinking...', toolCalls: [{ id: 'tc1', name: 'read', arguments: { path: '/a' } }], timestamp: Date.now() },
+      ];
+      const result = await provider.chat(messages, 'claude-3-opus', defaultOptions);
+      expect(result).toBeDefined();
+    });
+
+    it('handles assistant without toolCalls', async () => {
+      const messages: Message[] = [
+        { role: 'assistant', content: 'Just text', timestamp: Date.now() },
+      ];
+      const result = await provider.chat(messages, 'claude-3-opus', defaultOptions);
+      expect(result).toBeDefined();
+    });
+
+    it('handles tool_result appended to assistant with toolCalls', async () => {
+      const messages: Message[] = [
+        { role: 'assistant', content: '', toolCalls: [{ id: 'tc1', name: 'read', arguments: {} }], timestamp: Date.now() },
+        { role: 'tool_result', toolCallId: 'tc1', content: 'data', timestamp: Date.now() },
+      ];
+      const result = await provider.chat(messages, 'claude-3-opus', defaultOptions);
+      expect(result).toBeDefined();
+    });
+
+    it('handles no text in response content', async () => {
+      const { default: MockAnthropic } = await import('@anthropic-ai/sdk');
+      const instance = new MockAnthropic();
+      instance.messages.create.mockResolvedValueOnce({
+        content: [{ type: 'tool_use', id: 'tc1', name: 'run', input: { cmd: 'ls' } }],
+        usage: { input_tokens: 10, output_tokens: 5 },
+        stop_reason: 'tool_use',
+      });
+      const result = await provider.chat(makeMessages(), 'claude-3-opus', defaultOptions);
+      expect(result.content).toBeUndefined();
+      expect(result.toolCalls).toHaveLength(1);
+    });
+
+    it('passes tools and tool_choice to API', async () => {
+      const { default: MockAnthropic } = await import('@anthropic-ai/sdk');
+      const instance = new MockAnthropic();
+      instance.messages.create.mockResolvedValueOnce({
+        content: [{ type: 'text', text: 'done' }],
+        usage: { input_tokens: 10, output_tokens: 5 },
+        stop_reason: 'end_turn',
+      });
+
+      const result = await provider.chat(makeMessages(), 'claude-3-opus', {
+        ...defaultOptions,
+        tools: [{ name: 'read', description: 'Read a file', parameters: { type: 'object', properties: {} } }],
+        tool_choice: { type: 'auto' },
+      });
+      expect(result.content).toBe('done');
+      expect(instance.messages.create).toHaveBeenCalledWith(
+        expect.objectContaining({ tool_choice: { type: 'auto' } }),
+        expect.anything(),
+      );
     });
   });
 });

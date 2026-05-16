@@ -139,4 +139,115 @@ describe('SessionManager', () => {
     const sm = new SessionManager(tempDir);
     await expect(sm.loadMessages('')).rejects.toThrow('Invalid session ID');
   });
+
+  it('saveSessionState and loadSessionState round-trip', async () => {
+    const sm = new SessionManager(tempDir);
+    const id = sm.createSession();
+    const state = {
+      sessionId: id,
+      messages: [{ role: 'user' as const, content: 'test', timestamp: 1000 }],
+      turn: 1,
+      totalTokens: 50,
+      lastCompactTokens: 0,
+      model: 'gpt-4',
+      provider: 'openai',
+      createdAt: 1000,
+      updatedAt: 2000,
+    };
+    await sm.saveSessionState(id, state);
+    const loaded = await sm.loadSessionState(id);
+    expect(loaded?.sessionId).toBe(id);
+    expect(loaded?.turn).toBe(1);
+    expect(loaded?.totalTokens).toBe(50);
+    expect(loaded?.model).toBe('gpt-4');
+    expect(loaded?.provider).toBe('openai');
+    expect(loaded?.messages).toHaveLength(1);
+  });
+
+  it('saveSessionState merges with existing state', async () => {
+    const sm = new SessionManager(tempDir);
+    const id = sm.createSession();
+    await sm.saveMessages(id, [{ role: 'user' as const, content: 'hello', timestamp: 100 }]);
+    await sm.saveSessionState(id, { turn: 5, totalTokens: 100 });
+    const loaded = await sm.loadSessionState(id);
+    expect(loaded?.turn).toBe(5);
+    expect(loaded?.totalTokens).toBe(100);
+    expect(loaded?.messages).toHaveLength(1);
+  });
+
+  it('loadSessionState returns null for invalid format', async () => {
+    const sm = new SessionManager(tempDir);
+    const id = sm.createSession();
+    const path = join(tempDir, 'sessions', `${id}.json`);
+    writeFileSync(path, JSON.stringify({ foo: 'bar' }), 'utf-8');
+    const loaded = await sm.loadSessionState(id);
+    expect(loaded).toBeNull();
+  });
+
+  it('loadSessionState returns null for unreadable file', async () => {
+    const sm = new SessionManager(tempDir);
+    const loaded = await sm.loadSessionState('session_00000000_00000000');
+    expect(loaded).toBeNull();
+  });
+
+  it('loadSessionState handles old array format backward compat', async () => {
+    const sm = new SessionManager(tempDir);
+    const id = sm.createSession();
+    const path = join(tempDir, 'sessions', `${id}.json`);
+    writeFileSync(path, JSON.stringify([
+      { role: 'user', content: 'hi', timestamp: 100 },
+      { role: 'assistant', content: 'hey', timestamp: 200 },
+    ]), 'utf-8');
+    const loaded = await sm.loadSessionState(id);
+    expect(loaded?.sessionId).toBe(id);
+    expect(loaded?.messages).toHaveLength(2);
+    expect(loaded?.createdAt).toBe(100);
+    expect(loaded?.updatedAt).toBe(200);
+    expect(loaded?.turn).toBe(0);
+  });
+
+  it('deleteSession returns false for non-existent file', async () => {
+    const sm = new SessionManager(tempDir);
+    const id = sm.createSession();
+    await sm.deleteSession(id);
+    const result = await sm.deleteSession(id);
+    expect(result).toBe(false);
+  });
+
+  it('getLatestSession returns null when no sessions', async () => {
+    const sm = new SessionManager(tempDir);
+    const result = await sm.getLatestSession();
+    expect(result).toBeNull();
+  });
+
+  it('getLatestSession returns most recent session', async () => {
+    const sm = new SessionManager(tempDir);
+    const id1 = sm.createSession();
+    const id2 = sm.createSession();
+    await sm.saveMessages(id1, [{ role: 'user' as const, content: 'a', timestamp: 1000 }]);
+    await sm.saveMessages(id2, [{ role: 'user' as const, content: 'b', timestamp: 2000 }]);
+    const latest = await sm.getLatestSession();
+    expect(latest).toBe(id2);
+  });
+
+  it('extractSessionMetadata handles unknown format', async () => {
+    const sm = new SessionManager(tempDir);
+    const id = sm.createSession();
+    const path = join(tempDir, 'sessions', `${id}.json`);
+    writeFileSync(path, JSON.stringify('just a string'), 'utf-8');
+    const sessions = await sm.listSessions();
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].id).toBe(id);
+    expect(sessions[0].messageCount).toBe(0);
+  });
+
+  it('saveSessionState rejects invalid session ID', async () => {
+    const sm = new SessionManager(tempDir);
+    await expect(sm.saveSessionState('nonexistent', { turn: 1 })).rejects.toThrow('Invalid session ID');
+  });
+
+  it('loadSessionState rejects invalid session ID', async () => {
+    const sm = new SessionManager(tempDir);
+    await expect(sm.loadSessionState('nonexistent')).rejects.toThrow('Invalid session ID');
+  });
 });
