@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import { readFile, writeFile, stat, readdir } from 'node:fs/promises';
 import { join, extname, relative, resolve as pathResolve } from 'node:path';
 import type { Tool, ToolContext, ToolResult } from './registry.js';
+import { extractSymbolsAST } from './ast-symbols.js';
 
 export interface SymbolDef {
   name: string;
@@ -238,6 +239,38 @@ export class CodeIndexer {
     } catch {
       return { symbols: 0, references: 0 };
     }
+
+    // Try AST-based extraction first
+    try {
+      const astResult = await extractSymbolsAST(source, filePath, relPath);
+      if (astResult) {
+        for (const def of astResult.symbols) {
+          const existing = this.index.symbols.get(def.name);
+          if (!existing) {
+            this.index.symbols.set(def.name, [def]);
+          } else if (!existing.some((d) => d.filePath === relPath && d.line === def.line)) {
+            existing.push(def);
+          }
+        }
+        for (const ref of astResult.references) {
+          const existing = this.index.references.get(ref.name);
+          if (existing) {
+            existing.push(ref);
+          } else {
+            this.index.references.set(ref.name, [ref]);
+          }
+        }
+        this.index.files.set(relPath, {
+          lastModified: fileStat.mtimeMs,
+          symbolCount: astResult.symbols.length,
+        });
+        return { symbols: astResult.symbols.length, references: astResult.references.length };
+      }
+    } catch {
+      // AST extraction failed, fall through to regex
+    }
+
+    // Regex fallback
     const lines = source.split('\n');
 
     let symbolCount = 0;

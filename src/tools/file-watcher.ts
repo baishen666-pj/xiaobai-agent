@@ -7,6 +7,7 @@ export interface FileWatcherOptions {
   onIndexUpdated?: (stats: { filesChecked: number; duration: number }) => void;
   excludeDirs?: string[];
   includeExtensions?: string[];
+  indexer?: { buildIndex: (files: string[]) => Promise<{ files: number }> };
 }
 
 const DEFAULT_EXCLUDE_DIRS = ['node_modules', '.git', 'dist', 'build', 'coverage', '.xiaobai'];
@@ -25,6 +26,7 @@ export class FileWatcher {
     onIndexUpdated?: (stats: { filesChecked: number; duration: number }) => void;
     excludeDirs: string[];
     includeExtensions: string[];
+    indexer?: { buildIndex: (files: string[]) => Promise<{ files: number }> };
   };
 
   constructor(options: FileWatcherOptions) {
@@ -34,6 +36,7 @@ export class FileWatcher {
       onIndexUpdated: options.onIndexUpdated,
       excludeDirs: options.excludeDirs ?? DEFAULT_EXCLUDE_DIRS,
       includeExtensions: options.includeExtensions ?? DEFAULT_INCLUDE_EXTENSIONS,
+      indexer: options.indexer,
     };
   }
 
@@ -76,6 +79,18 @@ export class FileWatcher {
     this.debounceTimer = undefined;
 
     const start = Date.now();
+
+    if (this.options.indexer) {
+      this.options.indexer.buildIndex(Array.from(files)).then((result) => {
+        if (this.options.onIndexUpdated) {
+          this.options.onIndexUpdated({
+            filesChecked: result.files,
+            duration: Date.now() - start,
+          });
+        }
+      });
+      return;
+    }
 
     if (this.options.onIndexUpdated) {
       this.options.onIndexUpdated({

@@ -36,3 +36,8 @@ export { getProviderCapability, resolveStructuredMode } from './structured/capab
 export { ProviderHealthChecker, type HealthCheckResult, type HealthStatus, type HealthCheckConfig } from './provider/health.js';
 export { MarketplaceRegistry, type MarketplaceEntry, type MarketplaceSearchOptions, type MarketplaceInstallResult } from './plugins/registry.js';
 export { AutoCompleter, completeFilePath, generateCompletionScript, type CompletionCandidate, type CompletionContext } from './cli/autocomplete.js';
+export { definitionTool } from './tools/builtin-definition.js';
+export { referencesTool } from './tools/builtin-references.js';
+export { typeInfoTool, type TypeInfo } from './tools/builtin-typeinfo.js';
+export { extractSymbolsAST, type ASTExtractionResult } from './tools/ast-symbols.js';
+export type { MessageContent, ContentPart, TextPart, ImagePart } from './types/content-types.js';
