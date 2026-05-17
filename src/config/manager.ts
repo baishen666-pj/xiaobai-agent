@@ -58,6 +58,20 @@ export interface XiaobaiConfig {
     compactProvider?: string;
     compactModel?: string;
   };
+  telemetry?: {
+    enabled: boolean;
+    maxTraces?: number;
+    sampleRate?: number;
+  };
+  persistence?: {
+    enabled: boolean;
+    adapter?: 'json' | 'sqlite' | 'memory';
+    path?: string;
+  };
+  server?: {
+    sseEnabled?: boolean;
+    heartbeatIntervalMs?: number;
+  };
 }
 
 export interface ProviderConfig {
@@ -115,6 +129,19 @@ const DEFAULT_CONFIG: XiaobaiConfig = {
   },
   plugins: {
     enabled: true,
+  },
+  telemetry: {
+    enabled: false,
+    maxTraces: 100,
+    sampleRate: 1.0,
+  },
+  persistence: {
+    enabled: false,
+    adapter: 'memory',
+  },
+  server: {
+    sseEnabled: false,
+    heartbeatIntervalMs: 30000,
   },
 };
 
@@ -228,6 +255,9 @@ export class ConfigManager {
       context: { ...base.context, ...override.context },
       permissions: { ...base.permissions, ...override.permissions },
       plugins: { ...base.plugins, ...override.plugins },
+      telemetry: { ...base.telemetry, ...override.telemetry },
+      persistence: { ...base.persistence, ...override.persistence },
+      server: { ...base.server, ...override.server },
     };
   }
 

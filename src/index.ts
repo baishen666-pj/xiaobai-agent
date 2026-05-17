@@ -41,3 +41,5 @@ export { referencesTool } from './tools/builtin-references.js';
 export { typeInfoTool, type TypeInfo } from './tools/builtin-typeinfo.js';
 export { extractSymbolsAST, type ASTExtractionResult } from './tools/ast-symbols.js';
 export type { MessageContent, ContentPart, TextPart, ImagePart } from './types/content-types.js';
+export { Tracer, Span } from './telemetry/tracer.js';
+export type { TelemetryConfig, SpanOptions, SpanData, TraceExport, SpanContext, SpanEvent, SpanKind, SpanStatus } from './telemetry/types.js';

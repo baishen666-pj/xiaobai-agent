@@ -5,12 +5,14 @@ import { readFile } from 'node:fs/promises';
 import { join, resolve, sep, extname, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EventBridge } from './eventBridge.js';
+import type { SSEClient } from './eventBridge.js';
 import type { Orchestrator, OrchestratorEvent } from '../core/orchestrator.js';
 import { createAuthChecker, type AuthConfig } from '../security/auth.js';
 import { isClientMessage, type ClientMessage } from './client-messages.js';
 import { AgentSession } from './agent-session.js';
 import type { AgentDeps } from '../core/agent.js';
 import type { LoopEvent } from '../core/loop.js';
+import type { Tracer } from '../telemetry/tracer.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -42,6 +44,9 @@ export interface DashboardServerOptions {
   staticDir?: string;
   auth?: AuthConfig;
   agentDeps?: AgentDeps;
+  sseEnabled?: boolean;
+  sseHeartbeatMs?: number;
+  tracer?: Tracer;
 }
 
 export class DashboardServer {
@@ -54,6 +59,10 @@ export class DashboardServer {
   private checkAuth: (req: IncomingMessage) => boolean;
   private agentDeps?: AgentDeps;
   private clientSessions = new Map<import('ws').WebSocket, AgentSession>();
+  private sseEnabled: boolean;
+  private sseHeartbeatMs: number;
+  private sseClientIdCounter = 0;
+  private tracer?: Tracer;
 
   constructor(options: DashboardServerOptions = {}) {
     this.port = options.port ?? 3001;
@@ -62,6 +71,9 @@ export class DashboardServer {
     this.checkAuth = createAuthChecker(options.auth ?? {});
     this.bridge = new EventBridge();
     this.agentDeps = options.agentDeps;
+    this.sseEnabled = options.sseEnabled ?? false;
+    this.sseHeartbeatMs = options.sseHeartbeatMs ?? 30000;
+    this.tracer = options.tracer;
 
     this.httpServer = createServer((req, res) => {
       this.handleRequest(req, res);
@@ -132,6 +144,16 @@ export class DashboardServer {
       return;
     }
 
+    if (url === '/events' && this.sseEnabled) {
+      this.handleSSE(req, res);
+      return;
+    }
+
+    if (url === '/api/traces') {
+      this.handleTraces(req, res);
+      return;
+    }
+
     const filePath = join(this.staticDir, url === '/' ? 'index.html' : url);
     const resolvedPath = resolve(filePath);
     const resolvedStaticDir = resolve(this.staticDir);
@@ -160,6 +182,60 @@ export class DashboardServer {
       res.writeHead(404);
       res.end();
     }
+  }
+
+  private handleSSE(_req: IncomingMessage, res: ServerResponse): void {
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+    });
+
+    const clientId = `sse-${++this.sseClientIdCounter}`;
+    const lastEventIdRaw = _req.headers['last-event-id'];
+    const lastEventIdStr = Array.isArray(lastEventIdRaw) ? lastEventIdRaw[0] : lastEventIdRaw;
+    const lastEventId = lastEventIdStr ? parseInt(lastEventIdStr, 10) : undefined;
+
+    const client: SSEClient = {
+      id: clientId,
+      res,
+      lastEventId: isNaN(lastEventId as number) ? undefined : lastEventId,
+    };
+
+    this.bridge.addSSEClient(client);
+
+    res.write(': connected\n\n');
+
+    const heartbeat = setInterval(() => {
+      if (!res.writableEnded && !res.destroyed) {
+        res.write(': heartbeat\n\n');
+      }
+    }, this.sseHeartbeatMs);
+
+    _req.on('close', () => {
+      clearInterval(heartbeat);
+      this.bridge.removeSSEClient(clientId);
+    });
+  }
+
+  private handleTraces(_req: IncomingMessage, res: ServerResponse): void {
+    const url = _req.url ?? '/api/traces';
+    const params = new URL(url, `http://${_req.headers.host}`).searchParams;
+    const limit = parseInt(params.get('limit') ?? '20', 10) || 20;
+
+    if (!this.tracer) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Tracer not configured' }));
+      return;
+    }
+
+    const traces = this.tracer.getRecentTraces(limit);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(traces));
+  }
+
+  setTracer(tracer: Tracer): void {
+    this.tracer = tracer;
   }
 
   attachOrchestrator(orchestrator: Orchestrator): () => void {

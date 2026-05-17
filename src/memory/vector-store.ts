@@ -12,7 +12,7 @@ export interface SearchResult {
   metadata?: Record<string, unknown>;
 }
 
-function cosineSimilarity(a: number[], b: number[]): number {
+export function cosineSimilarity(a: number[], b: number[]): number {
   if (a.length !== b.length) return 0;
   let dotProduct = 0;
   let normA = 0;
@@ -25,6 +25,18 @@ function cosineSimilarity(a: number[], b: number[]): number {
   const denominator = Math.sqrt(normA) * Math.sqrt(normB);
   if (denominator === 0) return 0;
   return dotProduct / denominator;
+}
+
+export interface VectorStoreAdapter {
+  add(entry: VectorEntry): Promise<void>;
+  addBatch(entries: VectorEntry[]): Promise<void>;
+  get(id: string): Promise<VectorEntry | undefined>;
+  remove(id: string): Promise<boolean>;
+  search(query: number[], topK: number, minScore: number): Promise<SearchResult[]>;
+  count(): Promise<number>;
+  clear(): Promise<void>;
+  save(): Promise<void>;
+  load(): Promise<VectorEntry[]>;
 }
 
 export class VectorStore {

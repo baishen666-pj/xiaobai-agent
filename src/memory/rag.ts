@@ -1,4 +1,4 @@
-import { VectorStore, type SearchResult } from './vector-store.js';
+import { VectorStore, type SearchResult, type VectorStoreAdapter } from './vector-store.js';
 import { EmbeddingService } from './embeddings.js';
 import type { ProviderRouter } from '../provider/router.js';
 
@@ -32,12 +32,13 @@ interface Chunk {
 export class RAGEngine {
   private vectorStore: VectorStore;
   private embeddingService: EmbeddingService;
+  private persistence?: VectorStoreAdapter;
   private chunks = new Map<string, Chunk>();
   private documents = new Map<string, RAGDocument>();
   private config: Required<RAGConfig>;
   private chunkIdCounter = 0;
 
-  constructor(provider: ProviderRouter, config?: RAGConfig) {
+  constructor(provider: ProviderRouter, config?: RAGConfig, persistence?: VectorStoreAdapter) {
     this.config = {
       topK: config?.topK ?? 5,
       minScore: config?.minScore ?? 0.7,
@@ -46,6 +47,7 @@ export class RAGEngine {
     };
     this.vectorStore = new VectorStore();
     this.embeddingService = new EmbeddingService(provider);
+    this.persistence = persistence;
   }
 
   async indexDocument(doc: RAGDocument): Promise<number> {
@@ -57,7 +59,7 @@ export class RAGEngine {
       this.chunks.set(chunk.id, chunk);
 
       const embedding = await this.embeddingService.embed(chunk.content);
-      this.vectorStore.add({
+      const entry = {
         id: chunk.id,
         content: chunk.content,
         embedding,
@@ -67,8 +69,17 @@ export class RAGEngine {
           source: doc.source,
           ...doc.metadata,
         },
-      });
+      };
+      this.vectorStore.add(entry);
+
+      if (this.persistence) {
+        await this.persistence.add(entry);
+      }
       indexed++;
+    }
+
+    if (this.persistence) {
+      await this.persistence.save();
     }
 
     return indexed;
@@ -111,6 +122,9 @@ export class RAGEngine {
     for (const chunkId of chunksToRemove) {
       this.chunks.delete(chunkId);
       this.vectorStore.remove(chunkId);
+      if (this.persistence) {
+        this.persistence.remove(chunkId);
+      }
     }
     return removed;
   }
@@ -132,6 +146,22 @@ export class RAGEngine {
     this.chunks.clear();
     this.documents.clear();
     this.embeddingService.clearCache();
+    if (this.persistence) {
+      // Fire-and-forget async clear to keep this method synchronous
+      this.persistence.clear().catch(() => {});
+    }
+  }
+
+  async loadPersisted(): Promise<number> {
+    if (!this.persistence) return 0;
+
+    const entries = await this.persistence.load();
+    let loaded = 0;
+    for (const entry of entries) {
+      this.vectorStore.add(entry);
+      loaded++;
+    }
+    return loaded;
   }
 
   private chunkText(text: string, documentId: string): Chunk[] {

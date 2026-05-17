@@ -5,14 +5,34 @@ export interface EmbeddingOptions {
   dimensions?: number;
 }
 
+export interface EmbeddingCacheAdapter {
+  get(key: string): Promise<number[] | undefined>;
+  set(key: string, value: number[]): Promise<void>;
+  clear(): Promise<void>;
+  size(): Promise<number>;
+}
+
+export interface EmbeddingServiceOptions {
+  model?: string;
+  cacheAdapter?: EmbeddingCacheAdapter;
+}
+
 export class EmbeddingService {
   private provider: ProviderRouter;
   private defaultModel: string;
   private cache = new Map<string, number[]>();
+  private cacheAdapter?: EmbeddingCacheAdapter;
 
-  constructor(provider: ProviderRouter, model?: string) {
+  constructor(provider: ProviderRouter, modelOrOptions?: string | EmbeddingServiceOptions) {
     this.provider = provider;
-    this.defaultModel = model ?? 'text-embedding-3-small';
+    if (typeof modelOrOptions === 'string') {
+      this.defaultModel = modelOrOptions;
+    } else if (modelOrOptions && typeof modelOrOptions === 'object') {
+      this.defaultModel = modelOrOptions.model ?? 'text-embedding-3-small';
+      this.cacheAdapter = modelOrOptions.cacheAdapter;
+    } else {
+      this.defaultModel = 'text-embedding-3-small';
+    }
   }
 
   async embed(text: string, options?: EmbeddingOptions): Promise<number[]> {
@@ -20,8 +40,23 @@ export class EmbeddingService {
     const cached = this.cache.get(cacheKey);
     if (cached) return cached;
 
+    // Check persistent adapter on in-memory cache miss
+    if (this.cacheAdapter) {
+      const persisted = await this.cacheAdapter.get(cacheKey);
+      if (persisted) {
+        this.cache.set(cacheKey, persisted);
+        return persisted;
+      }
+    }
+
     const embedding = await this.callProvider(text, options);
     this.cache.set(cacheKey, embedding);
+
+    // Write through to persistent adapter
+    if (this.cacheAdapter) {
+      await this.cacheAdapter.set(cacheKey, embedding);
+    }
+
     return embedding;
   }
 
@@ -35,6 +70,10 @@ export class EmbeddingService {
 
   clearCache(): void {
     this.cache.clear();
+    if (this.cacheAdapter) {
+      // Fire-and-forget async clear to keep this method synchronous
+      this.cacheAdapter.clear().catch(() => {});
+    }
   }
 
   getCacheSize(): number {
