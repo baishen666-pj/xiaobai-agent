@@ -715,8 +715,8 @@ describe('CLI index.ts', () => {
       }
     });
 
-    it('version is 0.3.0', () => {
-      expect(runCLI('--version').trim()).toBe('0.3.0');
+    it('version is 0.5.0', () => {
+      expect(runCLI('--version').trim()).toBe('0.5.0');
     });
   });
 });

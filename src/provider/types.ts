@@ -48,8 +48,15 @@ export interface ProviderConfig {
   apiMode?: 'chat-completions' | 'responses' | 'anthropic' | 'google';
 }
 
+export interface EmbeddingResponse {
+  embedding: number[];
+  usage?: { promptTokens: number; totalTokens: number };
+}
+
 export interface LLMProvider {
   readonly name: string;
   chat(messages: Message[], model: string, options: ChatOptions): Promise<ProviderResponse>;
   chatStream?(messages: Message[], model: string, options: ChatOptions): AsyncGenerator<StreamChunk, void, void>;
+  /** Generate an embedding vector for the given text */
+  embed?(text: string, model: string): Promise<EmbeddingResponse>;
 }

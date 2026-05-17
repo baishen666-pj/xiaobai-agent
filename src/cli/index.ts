@@ -18,7 +18,7 @@ const program = new Command();
 program
   .name('xiaobai')
   .description('Xiaobai - A fusion AI agent combining the best of Hermes, OpenClaw, Claude Code, and Codex')
-  .version('0.3.0');
+  .version('0.5.0');
 
 registerChatCommand(program);
 registerExecCommand(program);

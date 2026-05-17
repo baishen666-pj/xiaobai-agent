@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { RoleId } from './roles.js';
 
 export type TaskStatus =
@@ -54,6 +55,10 @@ export interface TaskEvent {
 
 let taskCounter = 0;
 
+export function resetTaskCounter(): void {
+  taskCounter = 0;
+}
+
 export function createTask(params: {
   description: string;
   role: RoleId;
@@ -64,7 +69,7 @@ export function createTask(params: {
   maxRetries?: number;
 }): Task {
   return {
-    id: `task_${++taskCounter}_${Date.now().toString(36)}`,
+    id: `task_${randomUUID().slice(0, 8)}`,
     parentTaskId: params.parentTaskId,
     description: params.description,
     role: params.role,

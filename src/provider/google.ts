@@ -1,5 +1,5 @@
 import type { Message } from '../session/manager.js';
-import type { ProviderConfig, ProviderResponse, StreamChunk, ChatOptions, LLMProvider } from './types.js';
+import type { ProviderConfig, ProviderResponse, StreamChunk, ChatOptions, EmbeddingResponse, LLMProvider } from './types.js';
 
 // ── Google Generative Language API types ──
 
@@ -53,12 +53,12 @@ export class GoogleProvider implements LLMProvider {
   }
 
   async chat(messages: Message[], model: string, options: ChatOptions): Promise<ProviderResponse> {
-    const url = `${this.baseUrl}/models/${model}:generateContent?key=${this.apiKey}`;
+    const url = `${this.baseUrl}/models/${model}:generateContent`;
     const body = this.buildRequestBody(messages, options);
 
     const response = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': this.apiKey },
       body: JSON.stringify(body),
       signal: options.abortSignal ?? undefined,
     });
@@ -74,12 +74,12 @@ export class GoogleProvider implements LLMProvider {
   }
 
   async *chatStream(messages: Message[], model: string, options: ChatOptions): AsyncGenerator<StreamChunk, void, void> {
-    const url = `${this.baseUrl}/models/${model}:streamGenerateContent?alt=sse&key=${this.apiKey}`;
+    const url = `${this.baseUrl}/models/${model}:streamGenerateContent?alt=sse`;
     const body = this.buildRequestBody(messages, options);
 
     const response = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': this.apiKey },
       body: JSON.stringify(body),
       signal: options.abortSignal ?? undefined,
     });
@@ -243,5 +243,27 @@ export class GoogleProvider implements LLMProvider {
         : undefined,
       stopReason: candidate.finishReason?.toLowerCase() as ProviderResponse['stopReason'],
     };
+  }
+
+  async embed(text: string, model = 'text-embedding-004'): Promise<EmbeddingResponse> {
+    const url = `${this.baseUrl}/models/${model}:embedContent`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': this.apiKey },
+      body: JSON.stringify({ model: `models/${model}`, content: { parts: [{ text }] } }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Google Embedding API error: ${response.status}`);
+    }
+
+    const data = await response.json() as {
+      embedding?: { values?: number[] };
+    };
+
+    const values = data.embedding?.values;
+    if (!values) throw new Error('No embedding returned from Google API');
+
+    return { embedding: values };
   }
 }

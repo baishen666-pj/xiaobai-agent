@@ -16,7 +16,7 @@ describe('task', () => {
         role: 'researcher',
       });
 
-      expect(task.id).toMatch(/^task_\d+_/);
+      expect(task.id).toMatch(/^task_[a-f0-9]{8}$/);
       expect(task.description).toBe('Search codebase');
       expect(task.role).toBe('researcher');
       expect(task.status).toBe('pending');

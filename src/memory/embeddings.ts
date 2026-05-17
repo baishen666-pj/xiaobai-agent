@@ -43,39 +43,45 @@ export class EmbeddingService {
 
   private async callProvider(text: string, options?: EmbeddingOptions): Promise<number[]> {
     const model = options?.model ?? this.defaultModel;
+    const dimensions = options?.dimensions;
 
     try {
-      const response = await this.provider.chat(
-        [
-          {
-            role: 'user',
-            content: `Generate an embedding for the following text. Return ONLY a JSON array of ${options?.dimensions ?? 1536} floating-point numbers, nothing else:\n\n${text}`,
-          },
-        ],
-        { system: 'You are an embedding generator. Return only a JSON array of numbers.' },
-      );
+      const response = await this.provider.embed(text, model);
+      let embedding = response.embedding;
 
-      const content = response?.content ?? '';
-      const match = content.match(/\[[\d\s,.\-e]+\]/);
-      if (match) {
-        return JSON.parse(match[0]);
+      if (dimensions && dimensions < embedding.length) {
+        embedding = embedding.slice(0, dimensions);
       }
+
+      return embedding;
     } catch {
-      // Fallback to simple hash-based embedding
+      // Fallback to keyword-based pseudo-embedding when provider doesn't support embeddings
     }
 
-    return this.fallbackEmbed(text, options?.dimensions ?? 1536);
+    return this.keywordFallback(text, dimensions ?? 384);
   }
 
-  private fallbackEmbed(text: string, dimensions: number): number[] {
+  /**
+   * Deterministic keyword-based fallback that preserves some semantic similarity.
+   * Texts sharing common words will produce vectors with higher cosine similarity.
+   */
+  private keywordFallback(text: string, dimensions: number): number[] {
     const result = new Array(dimensions).fill(0);
     const normalized = text.toLowerCase().trim();
     if (normalized.length === 0) return result;
 
-    for (let i = 0; i < normalized.length; i++) {
-      const charCode = normalized.charCodeAt(i);
-      const idx = i % dimensions;
-      result[idx] += Math.sin(charCode * (i + 1) * 0.001);
+    // Simple hash-based approach: hash each word and accumulate into fixed buckets
+    const words = normalized.split(/\s+/);
+    for (const word of words) {
+      let hash = 0;
+      for (let i = 0; i < word.length; i++) {
+        hash = ((hash << 5) - hash + word.charCodeAt(i)) | 0;
+      }
+      // Map hash to multiple dimensions for better distribution
+      for (let d = 0; d < 3; d++) {
+        const idx = Math.abs(hash + d * 7919) % dimensions;
+        result[idx] += 1.0;
+      }
     }
 
     const norm = Math.sqrt(result.reduce((s, v) => s + v * v, 0));

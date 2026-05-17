@@ -24,8 +24,6 @@ interface PendingRequest {
   timer: ReturnType<typeof setTimeout>;
 }
 
-let messageIdCounter = 0;
-
 export class MessageBus {
   private emitter = new EventEmitter();
   private subscriptions = new Map<string, BusSubscription>();
@@ -33,6 +31,7 @@ export class MessageBus {
   private history: BusMessage[] = [];
   private maxHistory: number;
   private defaultTimeout: number;
+  private messageIdCounter = 0;
 
   constructor(options?: { maxHistory?: number; defaultTimeout?: number }) {
     this.maxHistory = options?.maxHistory ?? 1000;
@@ -42,7 +41,7 @@ export class MessageBus {
 
   send(from: string, to: string, type: string, payload: unknown): BusMessage {
     const message: BusMessage = {
-      id: `msg_${++messageIdCounter}`,
+      id: `msg_${++this.messageIdCounter}`,
       from,
       to,
       type,
@@ -58,7 +57,7 @@ export class MessageBus {
 
   broadcast(from: string, type: string, payload: unknown): BusMessage {
     const message: BusMessage = {
-      id: `msg_${++messageIdCounter}`,
+      id: `msg_${++this.messageIdCounter}`,
       from,
       type,
       payload,
@@ -72,9 +71,9 @@ export class MessageBus {
   }
 
   async request(from: string, to: string, type: string, payload: unknown, timeoutMs?: number): Promise<BusMessage> {
-    const correlationId = `req_${++messageIdCounter}`;
+    const correlationId = `req_${++this.messageIdCounter}`;
     const message: BusMessage = {
-      id: `msg_${messageIdCounter}`,
+      id: `msg_${this.messageIdCounter}`,
       from,
       to,
       type,
@@ -100,7 +99,7 @@ export class MessageBus {
 
   reply(originalMessage: BusMessage, from: string, payload: unknown): BusMessage {
     const reply: BusMessage = {
-      id: `msg_${++messageIdCounter}`,
+      id: `msg_${++this.messageIdCounter}`,
       from,
       to: originalMessage.from,
       type: `${originalMessage.type}:reply`,
@@ -127,7 +126,7 @@ export class MessageBus {
   }
 
   subscribe(agentId: string, pattern: string, handler: BusEventHandler): () => void {
-    const subId = `sub_${++messageIdCounter}`;
+    const subId = `sub_${++this.messageIdCounter}`;
     const sub: BusSubscription = { id: subId, agentId, pattern };
     this.subscriptions.set(subId, sub);
 

@@ -11,6 +11,23 @@ import type { Tool, ToolContext, ToolResult } from './registry.js';
 export const MAX_OUTPUT = 50_000;
 export const IS_WIN = process.platform === 'win32';
 
+const SAFE_ENV_KEYS = new Set([
+  'PATH', 'HOME', 'USERPROFILE', 'APPDATA', 'TEMP', 'TMP',
+  'SHELL', 'TERM', 'LANG', 'LC_ALL', 'SYSTEMROOT', 'COMSPEC',
+  'NODE_OPTIONS', 'NODE_PATH',
+]);
+
+function buildSafeEnv(): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const key of Object.keys(process.env)) {
+    if (SAFE_ENV_KEYS.has(key.toUpperCase()) || SAFE_ENV_KEYS.has(key)) {
+      const val = process.env[key];
+      if (val !== undefined) env[key] = val;
+    }
+  }
+  return env;
+}
+
 export function truncate(output: string, max = MAX_OUTPUT): string {
   if (output.length <= max) return output;
   const half = Math.floor(max / 2) - 20;
@@ -62,7 +79,7 @@ export function execStreaming(command: string, cwd: string, timeout: number): Pr
 
     const child: ChildProcess = spawn(shell, shellArgs, {
       cwd,
-      env: { ...process.env },
+      env: buildSafeEnv(),
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
     });

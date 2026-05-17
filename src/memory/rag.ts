@@ -29,14 +29,13 @@ interface Chunk {
   index: number;
 }
 
-let chunkIdCounter = 0;
-
 export class RAGEngine {
   private vectorStore: VectorStore;
   private embeddingService: EmbeddingService;
   private chunks = new Map<string, Chunk>();
   private documents = new Map<string, RAGDocument>();
   private config: Required<RAGConfig>;
+  private chunkIdCounter = 0;
 
   constructor(provider: ProviderRouter, config?: RAGConfig) {
     this.config = {
@@ -141,7 +140,7 @@ export class RAGEngine {
 
     if (text.length <= chunkSize) {
       chunks.push({
-        id: `chunk_${++chunkIdCounter}`,
+        id: `chunk_${++this.chunkIdCounter}`,
         content: text,
         documentId,
         index: 0,
@@ -156,7 +155,7 @@ export class RAGEngine {
       const content = text.slice(start, end);
 
       chunks.push({
-        id: `chunk_${++chunkIdCounter}`,
+        id: `chunk_${++this.chunkIdCounter}`,
         content,
         documentId,
         index,

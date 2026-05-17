@@ -119,7 +119,7 @@ export class SubAgentEngine {
     const childId = `sub_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
     const sessionId = this.sessions.createSession();
 
-    const lease = this.credentialPool.acquire(definition.model ? undefined : undefined);
+    const lease = this.credentialPool.acquire(definition.model);
 
     const child: ActiveChild = {
       id: childId,
@@ -231,7 +231,7 @@ export class SubAgentEngine {
       const original = parentTools;
       filtered.register({
         definition: toolDef,
-        execute: async (args) => original.execute(toolDef.name, args),
+        execute: async (args, context) => original.execute(toolDef.name, args, context),
       });
     }
 

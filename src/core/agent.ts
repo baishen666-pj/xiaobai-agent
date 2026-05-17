@@ -126,6 +126,9 @@ export class XiaobaiAgent {
     if (this.deps.plugins) {
       await this.deps.plugins.deactivateAll();
     }
+    if (this.deps.mcp) {
+      await this.deps.mcp.disconnectAll();
+    }
   }
 
   static async create(configDir?: string): Promise<XiaobaiAgent> {

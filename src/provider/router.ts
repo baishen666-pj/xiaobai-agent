@@ -1,7 +1,7 @@
 import type { XiaobaiConfig } from '../config/manager.js';
 import type { Message } from '../session/manager.js';
 import type { ToolDefinition } from '../tools/registry.js';
-import type { ProviderResponse, StreamChunk, ChatOptions, ProviderConfig, LLMProvider } from './types.js';
+import type { ProviderResponse, StreamChunk, ChatOptions, ProviderConfig, EmbeddingResponse, LLMProvider } from './types.js';
 import { AnthropicProvider } from './anthropic.js';
 import { OpenAICompatibleProvider } from './openai.js';
 import { GoogleProvider } from './google.js';
@@ -144,6 +144,15 @@ export class ProviderRouter {
       { maxTokens: 2000 },
     );
     return response.content ?? 'Context summary unavailable';
+  }
+
+  async embed(text: string, model?: string): Promise<EmbeddingResponse> {
+    const providerName = this.config.provider.default;
+    const provider = this.getProvider(providerName);
+    if (!provider.embed) {
+      throw new Error(`Provider '${providerName}' does not support embeddings`);
+    }
+    return provider.embed(text, model ?? 'text-embedding-3-small');
   }
 
   private async withRetry(

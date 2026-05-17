@@ -255,7 +255,7 @@ describe('MCPSession — Connection management', () => {
     expect(initReq!.method).toBe('initialize');
     expect(initReq!.params).toMatchObject({
       protocolVersion: '2024-11-05',
-      clientInfo: { name: 'xiaobai', version: '0.3.0' },
+      clientInfo: { name: 'xiaobai', version: expect.any(String) },
     });
   });
 
@@ -601,7 +601,7 @@ describe('MCPConnection — Protocol', () => {
     expect(req!.method).toBe('initialize');
     expect(req!.params).toMatchObject({
       protocolVersion: '2024-11-05',
-      clientInfo: { name: 'xiaobai', version: '0.3.0' },
+      clientInfo: { name: 'xiaobai', version: expect.any(String) },
     });
 
     simulateResponse(req!.id as number, { capabilities: { tools: true } });

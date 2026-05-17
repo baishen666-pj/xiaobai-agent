@@ -1,5 +1,5 @@
 import type { Message } from '../session/manager.js';
-import type { ProviderConfig, ProviderResponse, StreamChunk, ChatOptions, LLMProvider } from './types.js';
+import type { ProviderConfig, ProviderResponse, StreamChunk, ChatOptions, EmbeddingResponse, LLMProvider } from './types.js';
 
 export class OpenAICompatibleProvider implements LLMProvider {
   readonly name: string;
@@ -126,6 +126,39 @@ export class OpenAICompatibleProvider implements LLMProvider {
         yield { type: 'usage', usage: { promptTokens: chunk.usage.prompt_tokens, completionTokens: chunk.usage.completion_tokens, totalTokens: chunk.usage.total_tokens } };
       }
     }
+  }
+
+  async embed(text: string, model = 'text-embedding-3-small'): Promise<EmbeddingResponse> {
+    const baseUrl = this.baseUrl ?? 'https://api.openai.com/v1';
+    const url = `${baseUrl.replace(/\/$/, '')}/embeddings`;
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${this.apiKey}`,
+      },
+      body: JSON.stringify({ model, input: text }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Embedding API error: ${response.status}`);
+    }
+
+    const data = await response.json() as {
+      data: Array<{ embedding: number[] }>;
+      usage?: { prompt_tokens: number; total_tokens: number };
+    };
+
+    const embedding = data.data?.[0]?.embedding;
+    if (!embedding) throw new Error('No embedding returned from API');
+
+    return {
+      embedding,
+      usage: data.usage
+        ? { promptTokens: data.usage.prompt_tokens, totalTokens: data.usage.total_tokens }
+        : undefined,
+    };
   }
 
   private formatMessages(messages: Message[]) {

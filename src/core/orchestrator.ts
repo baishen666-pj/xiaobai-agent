@@ -17,7 +17,6 @@ import { analyzeFailure, type ReflectionOutcome } from './reflection.js';
 import type { Message } from '../session/manager.js';
 import type { ChatOptions } from '../provider/types.js';
 import { join } from 'node:path';
-import { EventEmitter } from 'node:events';
 
 export type OrchestratorEvent =
   | { type: 'plan'; tasks: Task[] }
@@ -54,8 +53,6 @@ interface AgentHandle {
   cost: number;
 }
 
-let agentCounter = 0;
-
 export class Orchestrator {
   private deps: AgentDeps;
   private workspace: Workspace;
@@ -67,9 +64,8 @@ export class Orchestrator {
   private maxDepth: number;
   private taskTimeoutMs: number;
   private source: SessionSource;
-  private scheduler = new EventEmitter();
-  private taskDone: Promise<void> | null = null;
-  private resolveTaskDone: (() => void) | null = null;
+  private agentCounter = 0;
+  private taskSettledResolvers: Array<() => void> = [];
 
   constructor(deps: AgentDeps, workspaceDir?: string) {
     this.deps = deps;
@@ -175,8 +171,8 @@ export class Orchestrator {
     const inflight: Promise<void>[] = [];
 
     const waitForTask = (): Promise<void> => {
-      return new Promise((resolve) => {
-        this.scheduler.once('task_settled', resolve);
+      return new Promise<void>((resolve) => {
+        this.taskSettledResolvers.push(resolve);
       });
     };
 
@@ -210,7 +206,8 @@ export class Orchestrator {
         const p = this.runTask(handle, task, options).catch((err) => {
           console.error(`[orchestrator] Task ${task.id} failed:`, err);
         }).finally(() => {
-          this.scheduler.emit('task_settled');
+          const resolve = this.taskSettledResolvers.shift();
+          if (resolve) resolve();
         });
         inflight.push(p);
         launched++;
@@ -351,7 +348,7 @@ export class Orchestrator {
     if (depth > this.maxDepth) return null;
 
     const role = getRole(roleId);
-    const id = `agent_${++agentCounter}_${roleId}_d${depth}`;
+    const id = `agent_${++this.agentCounter}_${roleId}_d${depth}`;
 
     const loop = new AgentLoop({
       provider: this.deps.provider,

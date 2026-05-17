@@ -33,10 +33,22 @@ interface JsonRpcResponse {
 
 const MAX_PENDING_REQUESTS = 1000;
 
+// Read version from package.json at module load time
+const PKG_VERSION = (() => {
+  try {
+    const pkgUrl = new URL('../../package.json', import.meta.url);
+    const raw = readFileSync(pkgUrl, 'utf-8');
+    return (JSON.parse(raw) as { version: string }).version;
+  } catch {
+    return '0.5.0';
+  }
+})();
+
 export class MCPSession {
   private configDir: string;
   private servers = new Map<string, MCPServerConfig>();
   private connections = new Map<string, MCPConnection>();
+  private exitHandler: (() => void) | null = null;
 
   constructor(configDir: string) {
     this.configDir = join(configDir, 'mcp');
@@ -44,6 +56,10 @@ export class MCPSession {
       mkdirSync(this.configDir, { recursive: true });
     }
     this.loadConfig();
+
+    // Ensure MCP child processes are cleaned up on process exit
+    this.exitHandler = () => { this.disconnectAllSync(); };
+    process.on('exit', this.exitHandler);
   }
 
   private loadConfig(): void {
@@ -257,6 +273,22 @@ export class MCPSession {
       conn.stop();
     }
     this.connections.clear();
+    this.unregisterExitHandler();
+  }
+
+  /** Synchronous cleanup for process exit — cannot be async */
+  private disconnectAllSync(): void {
+    for (const [, conn] of this.connections) {
+      conn.stop();
+    }
+    this.connections.clear();
+  }
+
+  private unregisterExitHandler(): void {
+    if (this.exitHandler) {
+      process.off('exit', this.exitHandler);
+      this.exitHandler = null;
+    }
   }
 
   getConnection(name: string): MCPConnection | undefined {
@@ -286,13 +318,30 @@ export class MCPConnection {
     this.config = config;
   }
 
+  /** Build a minimal env with only essential PATH and system vars — never leaks API keys */
+  protected buildSafeEnv(): Record<string, string> {
+    const safe = new Set([
+      'PATH', 'HOME', 'USERPROFILE', 'APPDATA', 'TEMP', 'TMP',
+      'SHELL', 'TERM', 'LANG', 'LC_ALL', 'SYSTEMROOT', 'COMSPEC',
+      'NODE_OPTIONS', 'NODE_PATH',
+    ]);
+    const env: Record<string, string> = {};
+    for (const key of Object.keys(process.env)) {
+      if (safe.has(key.toUpperCase()) || safe.has(key)) {
+        const val = process.env[key];
+        if (val !== undefined) env[key] = val;
+      }
+    }
+    return env;
+  }
+
   async start(): Promise<boolean> {
     if (!this.config.command) return false;
 
     try {
       this.process = spawn(this.config.command, this.config.args ?? [], {
         stdio: ['pipe', 'pipe', 'pipe'],
-        env: { ...process.env },
+        env: this.buildSafeEnv(),
         windowsHide: true,
       });
 
@@ -318,7 +367,7 @@ export class MCPConnection {
       const initResult = await this.sendRequest('initialize', {
         protocolVersion: '2024-11-05',
         capabilities: {},
-        clientInfo: { name: 'xiaobai', version: '0.3.0' },
+        clientInfo: { name: 'xiaobai', version: PKG_VERSION },
       });
 
       this.capabilities = (initResult as Record<string, unknown>)?.capabilities as Record<string, unknown> ?? {};
@@ -630,7 +679,7 @@ class MCPSSEConnection extends MCPConnection {
     const initResult = await this.sendRequest('initialize', {
       protocolVersion: '2024-11-05',
       capabilities: {},
-      clientInfo: { name: 'xiaobai', version: '0.4.0' },
+      clientInfo: { name: 'xiaobai', version: PKG_VERSION },
     });
     this.capabilities = (initResult as Record<string, unknown>)?.capabilities as Record<string, unknown> ?? {};
     await this.sendNotification('notifications/initialized', {});
