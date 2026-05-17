@@ -49,18 +49,64 @@ const BLOCKED_HOSTS = new Set([
   '192.168.', '10.', '172.16.', '172.17.', '172.18.', '172.19.',
   '172.20.', '172.21.', '172.22.', '172.23.', '172.24.', '172.25.',
   '172.26.', '172.27.', '172.28.', '172.29.', '172.30.', '172.31.',
+  // Link-local / cloud metadata endpoints
+  '169.254.',
+  // 0.0.x.x addresses
+  '0.',
+  // IPv6 loopback / mapped variants
+  '::',
+  '::ffff:127.0.0.1',
+  '::ffff:7f00:1',
+  '0:0:0:0:0:0:0:0',
+  // IPv6 link-local
+  'fe80:',
+  // IPv6 unique local addresses
+  'fc00:',
+  'fd00:',
 ]);
+
+function isHostSafe(host: string): boolean {
+  const lowered = host.toLowerCase();
+
+  // Block decimal IP representations (e.g. 2130706433 = 127.0.0.1)
+  const asNum = Number(lowered);
+  if (!isNaN(asNum) && asNum > 0 && Number.isInteger(asNum)) {
+    const octets = [
+      (asNum >>> 24) & 0xff,
+      (asNum >>> 16) & 0xff,
+      (asNum >>> 8) & 0xff,
+      asNum & 0xff,
+    ];
+    const dottedIp = octets.join('.');
+    if (!isHostSafe(dottedIp)) return false;
+  }
+
+  // Block octal IP representations (e.g. 0177.0.0.1 = 127.0.0.1)
+  if (/^0[0-7]+(\.[0-7]+){0,3}$/.test(lowered)) {
+    const octets = lowered.split('.').map((octet) => parseInt(octet, 8));
+    const dottedIp = octets.join('.');
+    if (!isHostSafe(dottedIp)) return false;
+  }
+
+  if (BLOCKED_HOSTS.has(lowered)) return false;
+  for (const prefix of BLOCKED_HOSTS) {
+    if (prefix.endsWith('.') && lowered.startsWith(prefix)) return false;
+    if (prefix.endsWith(':') && lowered.startsWith(prefix)) return false;
+  }
+  return true;
+}
 
 export function isUrlSafe(url: string): boolean {
   try {
     const parsed = new URL(url);
     if (!['http:', 'https:'].includes(parsed.protocol)) return false;
-    const host = parsed.hostname.toLowerCase();
-    if (BLOCKED_HOSTS.has(host)) return false;
-    for (const prefix of BLOCKED_HOSTS) {
-      if (prefix.endsWith('.') && host.startsWith(prefix)) return false;
+    // URL parser wraps IPv6 addresses in brackets (e.g. "[::1]");
+    // strip them so the blocklist matches bare IPv6 forms.
+    let host = parsed.hostname.toLowerCase();
+    if (host.startsWith('[') && host.endsWith(']')) {
+      host = host.slice(1, -1);
     }
-    return true;
+    return isHostSafe(host);
   } catch {
     return false;
   }

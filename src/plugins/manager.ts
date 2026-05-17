@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, cpSync, rmSync } from 'node:fs';
+import * as fs from 'node:fs';
 import { join, basename } from 'node:path';
 import { homedir } from 'node:os';
 import type { Plugin, PluginError, PluginInfo, PluginState } from './types.js';
@@ -9,6 +9,9 @@ import type { MemorySystem } from '../memory/system.js';
 import type { ProviderRouter } from '../provider/router.js';
 import { PluginAPIImpl } from './api.js';
 import { discoverPlugins, loadPluginModule } from './loader.js';
+
+const fsp = fs.promises;
+const exists = (p: string) => fsp.access(p).then(() => true, () => false);
 
 interface PluginHandle {
   plugin: Plugin;
@@ -167,19 +170,19 @@ export class PluginManager {
   }
 
   async install(source: string): Promise<void> {
-    if (!existsSync(source)) {
+    if (!(await exists(source))) {
       throw new Error(`Source path does not exist: ${source}`);
     }
 
     const name = basename(source);
     const dest = join(this.pluginsDir, name);
 
-    if (existsSync(dest)) {
+    if (await exists(dest)) {
       throw new Error(`Plugin "${name}" already exists at ${dest}`);
     }
 
-    mkdirSync(this.pluginsDir, { recursive: true });
-    cpSync(source, dest, { recursive: true });
+    await fsp.mkdir(this.pluginsDir, { recursive: true });
+    await fsp.cp(source, dest, { recursive: true });
   }
 
   async uninstall(name: string): Promise<void> {
@@ -198,8 +201,8 @@ export class PluginManager {
       // Best-effort destroy
     }
 
-    if (existsSync(handle.dir)) {
-      rmSync(handle.dir, { recursive: true, force: true });
+    if (await exists(handle.dir)) {
+      await fsp.rm(handle.dir, { recursive: true, force: true });
     }
 
     this.plugins.delete(name);

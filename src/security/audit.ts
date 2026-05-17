@@ -1,6 +1,9 @@
-import { existsSync, statSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
+import * as fs from 'node:fs';
+
+const fsp = fs.promises;
+const exists = (p: string) => fsp.access(p).then(() => true, () => false);
 
 export type AuditSeverity = 'critical' | 'warn' | 'info';
 
@@ -32,11 +35,11 @@ export class SecurityAudit {
     this.findings = [];
     this.counter = 0;
 
-    this.checkConfigDirPermissions();
-    this.checkSecretDetection();
+    await this.checkConfigDirPermissions();
+    await this.checkSecretDetection();
     this.checkNetworkExposure();
     this.checkSandboxConfiguration();
-    this.checkToolPolicies();
+    await this.checkToolPolicies();
     this.checkAuthConfiguration();
 
     return this.buildReport();
@@ -59,12 +62,12 @@ export class SecurityAudit {
     });
   }
 
-  private checkConfigDirPermissions(): void {
+  private async checkConfigDirPermissions(): Promise<void> {
     const configDir = this.configDir;
-    if (!existsSync(configDir)) return;
+    if (!(await exists(configDir))) return;
 
     try {
-      const stat = statSync(configDir);
+      const stat = await fsp.stat(configDir);
       const mode = stat.mode & 0o777;
       if (mode & 0o007) {
         this.addFinding(
@@ -80,7 +83,7 @@ export class SecurityAudit {
     } catch (err) { console.error('[audit] Operation failed:', err); }
   }
 
-  private checkSecretDetection(): void {
+  private async checkSecretDetection(): Promise<void> {
     const configFiles = ['config.json', 'settings.json', 'credentials.json', '.env'];
     const secretPatterns = [
       /(?:api[_-]?key|apikey)\s*[:=]\s*['"]?[a-zA-Z0-9]{20,}/i,
@@ -91,10 +94,10 @@ export class SecurityAudit {
 
     for (const file of configFiles) {
       const path = join(this.configDir, file);
-      if (!existsSync(path)) continue;
+      if (!(await exists(path))) continue;
 
       try {
-        const content = readFileSync(path, 'utf-8');
+        const content = await fsp.readFile(path, 'utf-8');
         for (const pattern of secretPatterns) {
           if (pattern.test(content)) {
             this.addFinding(
@@ -140,11 +143,11 @@ export class SecurityAudit {
     }
   }
 
-  private checkToolPolicies(): void {
+  private async checkToolPolicies(): Promise<void> {
     const policyFile = join(this.configDir, 'tool-policy.json');
-    if (existsSync(policyFile)) {
+    if (await exists(policyFile)) {
       try {
-        const policy = JSON.parse(readFileSync(policyFile, 'utf-8'));
+        const policy = JSON.parse(await fsp.readFile(policyFile, 'utf-8'));
         const blocked = policy.blocked ?? [];
         const dangerous = ['bash', 'exec', 'shell', 'eval'];
         const notBlocked = dangerous.filter((t) => !blocked.includes(t));

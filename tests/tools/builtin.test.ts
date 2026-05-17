@@ -19,6 +19,9 @@ let mockStatSyncOverride: ((...args: any[]) => any) | null = null;
 let mockReadFileSyncOverride: ((...args: any[]) => any) | null = null;
 let mockWriteFileSyncOverride: ((...args: any[]) => any) | null = null;
 let mockFsPromisesGlobOverride: ((...args: any[]) => any) | null = null;
+let mockFsPromisesStatOverride: ((...args: any[]) => any) | null = null;
+let mockFsPromisesReadFileOverride: ((...args: any[]) => any) | null = null;
+let mockFsPromisesWriteFileOverride: ((...args: any[]) => any) | null = null;
 
 // Hoisted mock for node:child_process
 vi.mock('node:child_process', async (importOriginal) => {
@@ -58,6 +61,28 @@ vi.mock('node:fs', async (importOriginal) => {
     existsSync: orig.existsSync,
     mkdirSync: orig.mkdirSync,
     readdirSync: orig.readdirSync,
+    get promises() {
+      return {
+        ...orig.promises,
+        stat: (...args: any[]) => {
+          if (mockFsPromisesStatOverride) return mockFsPromisesStatOverride(...args);
+          return orig.promises.stat(...args);
+        },
+        readFile: (...args: any[]) => {
+          if (mockFsPromisesReadFileOverride) return mockFsPromisesReadFileOverride(...args);
+          return orig.promises.readFile(...args);
+        },
+        writeFile: (...args: any[]) => {
+          if (mockFsPromisesWriteFileOverride) return mockFsPromisesWriteFileOverride(...args);
+          return orig.promises.writeFile(...args);
+        },
+        access: orig.promises.access,
+        mkdir: orig.promises.mkdir,
+        readdir: orig.promises.readdir,
+        cp: orig.promises.cp,
+        copyFile: orig.promises.copyFile,
+      };
+    },
   };
 });
 
@@ -102,6 +127,9 @@ beforeEach(() => {
   mockReadFileSyncOverride = null;
   mockWriteFileSyncOverride = null;
   mockFsPromisesGlobOverride = null;
+  mockFsPromisesStatOverride = null;
+  mockFsPromisesReadFileOverride = null;
+  mockFsPromisesWriteFileOverride = null;
 });
 
 afterEach(() => {
@@ -111,6 +139,10 @@ afterEach(() => {
   mockStatSyncOverride = null;
   mockReadFileSyncOverride = null;
   mockWriteFileSyncOverride = null;
+  mockFsPromisesGlobOverride = null;
+  mockFsPromisesStatOverride = null;
+  mockFsPromisesReadFileOverride = null;
+  mockFsPromisesWriteFileOverride = null;
   mockFsPromisesGlobOverride = null;
 });
 
@@ -379,15 +411,15 @@ describe('Read Tool', () => {
     writeFileSync(filePath, 'small');
 
     const origFs = await import('node:fs');
-    mockStatSyncOverride = (p: string) => {
+    mockFsPromisesStatOverride = (p: string) => {
       if (typeof p === 'string' && p.includes('big.txt')) {
-        return {
+        return Promise.resolve({
           size: 20 * 1024 * 1024,
           isDirectory: () => false,
           isFile: () => true,
-        } as any;
+        } as any);
       }
-      return origFs.statSync(p);
+      return origFs.promises.stat(p);
     };
 
     const tools = getBuiltinTools(makeContext());
@@ -404,11 +436,11 @@ describe('Read Tool', () => {
     const filePath = join(testDir, 'readfail.txt');
     writeFileSync(filePath, 'content');
 
-    mockReadFileSyncOverride = (...args: any[]) => {
+    mockFsPromisesReadFileOverride = (...args: any[]) => {
       if (typeof args[0] === 'string' && args[0].includes('readfail.txt')) {
-        throw new Error('permission denied');
+        return Promise.reject(new Error('permission denied'));
       }
-      return readFileSync(args[0], args[1]);
+      return (import('node:fs/promises')).then(m => m.readFile(args[0], args[1]));
     };
 
     const result = await read.execute({ file_path: filePath });
@@ -475,8 +507,8 @@ describe('Write Tool', () => {
     const write = tools.find((t) => t.definition.name === 'write')!;
     const filePath = join(testDir, 'writefail.txt');
 
-    mockWriteFileSyncOverride = () => {
-      throw new Error('disk full');
+    mockFsPromisesWriteFileOverride = () => {
+      return Promise.reject(new Error('disk full'));
     };
 
     const result = await write.execute({ file_path: filePath, content: 'data' });
@@ -609,8 +641,8 @@ describe('Edit Tool', () => {
     const tools = getBuiltinTools(makeContext());
     const edit = tools.find((t) => t.definition.name === 'edit')!;
 
-    mockWriteFileSyncOverride = () => {
-      throw new Error('write failed');
+    mockFsPromisesWriteFileOverride = () => {
+      return Promise.reject(new Error('write failed'));
     };
 
     const result = await edit.execute({

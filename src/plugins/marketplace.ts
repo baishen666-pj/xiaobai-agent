@@ -147,7 +147,8 @@ export class PluginMarketplace {
     }
     try {
       return JSON.parse(readFileSync(indexPath, 'utf-8')) as MarketplaceManifest;
-    } catch {
+    } catch (e) {
+      console.debug('marketplace: failed to parse local index, returning empty', (e as Error).message);
       return { version: '1', updatedAt: new Date().toISOString(), plugins: [] };
     }
   }

@@ -1,14 +1,10 @@
-import {
-  readFileSync,
-  writeFileSync,
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  statSync,
-} from 'node:fs';
+import * as fs from 'node:fs';
 import { join, resolve, isAbsolute } from 'node:path';
 import type { Tool, ToolContext, ToolResult } from './registry.js';
 import { truncate, isPathSafe, isBinaryContent } from './builtin-shell.js';
+
+const fsp = fs.promises;
+const exists = (p: string) => fsp.access(p).then(() => true, () => false);
 
 export const readTool = (context?: ToolContext): Tool => ({
   definition: {
@@ -40,14 +36,14 @@ export const readTool = (context?: ToolContext): Tool => ({
       return { output: `Access denied: path outside allowed scope`, success: false, error: 'path_unsafe' };
     }
 
-    if (!existsSync(absPath)) {
+    if (!(await exists(absPath))) {
       return { output: `File not found: ${absPath}`, success: false, error: 'file_not_found' };
     }
 
-    const fileStat = statSync(absPath);
+    const fileStat = await fsp.stat(absPath);
     if (fileStat.isDirectory()) {
       try {
-        const entries = readdirSync(absPath);
+        const entries = await fsp.readdir(absPath);
         return { output: entries.join('\n'), success: true };
       } catch (error) {
         return { output: `Cannot read directory: ${(error as Error).message}`, success: false, error: 'read_error' };
@@ -59,7 +55,7 @@ export const readTool = (context?: ToolContext): Tool => ({
     }
 
     try {
-      const content = readFileSync(absPath, 'utf-8');
+      const content = await fsp.readFile(absPath, 'utf-8');
 
       if (isBinaryContent(content)) {
         return {
@@ -110,8 +106,8 @@ export const writeTool = (context?: ToolContext): Tool => ({
 
     try {
       const dir = join(absPath, '..');
-      if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-      writeFileSync(absPath, content, 'utf-8');
+      if (!(await exists(dir))) await fsp.mkdir(dir, { recursive: true });
+      await fsp.writeFile(absPath, content, 'utf-8');
       return {
         output: `Wrote ${content.length} chars to ${absPath}`,
         success: true,
@@ -155,7 +151,7 @@ export const editTool = (context?: ToolContext): Tool => ({
       return { output: `Access denied: path outside allowed scope`, success: false, error: 'path_unsafe' };
     }
 
-    if (!existsSync(absPath)) {
+    if (!(await exists(absPath))) {
       return { output: `File not found: ${absPath}`, success: false, error: 'file_not_found' };
     }
 
@@ -164,7 +160,7 @@ export const editTool = (context?: ToolContext): Tool => ({
     }
 
     try {
-      let content = readFileSync(absPath, 'utf-8');
+      let content = await fsp.readFile(absPath, 'utf-8');
 
       if (!content.includes(old_string)) {
         return { output: 'old_string not found in file', success: false, error: 'match_not_found' };
@@ -183,7 +179,7 @@ export const editTool = (context?: ToolContext): Tool => ({
 
       const oldCount = content.split(old_string).length - 1;
       content = replace_all ? content.replaceAll(old_string, new_string) : content.replace(old_string, new_string);
-      writeFileSync(absPath, content, 'utf-8');
+      await fsp.writeFile(absPath, content, 'utf-8');
 
       return {
         output: `Edited ${absPath} (${oldCount} replacement${oldCount > 1 ? 's' : ''})`,

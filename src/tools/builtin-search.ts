@@ -1,9 +1,10 @@
 import { execSync, execFileSync } from 'node:child_process';
-import { existsSync, statSync, readdirSync } from 'node:fs';
-import { readFile, stat, readdir, glob as asyncGlob } from 'node:fs/promises';
+import { readFile, stat, readdir, glob as asyncGlob, access } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import type { Tool, ToolResult } from './registry.js';
 import { IS_WIN, isBinaryContent, isPathSafe } from './builtin-shell.js';
+
+const exists = (p: string) => access(p).then(() => true, () => false);
 
 export let rgAvailable: boolean | null = null;
 
@@ -106,7 +107,7 @@ export const grepTool: Tool = {
     };
 
     const absSearchPath = resolve(searchPath);
-    if (!existsSync(absSearchPath)) {
+    if (!(await exists(absSearchPath))) {
       return { output: `Path not found: ${absSearchPath}`, success: false, error: 'path_not_found' };
     }
 
@@ -241,7 +242,7 @@ export const globTool: Tool = {
     const { pattern, path: searchPath = '.' } = args as { pattern: string; path?: string };
 
     const absSearchPath = resolve(searchPath);
-    if (!existsSync(absSearchPath)) {
+    if (!(await exists(absSearchPath))) {
       return { output: `Path not found: ${absSearchPath}`, success: false, error: 'path_not_found' };
     }
 

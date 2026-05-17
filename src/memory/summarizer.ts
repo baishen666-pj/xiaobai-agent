@@ -51,8 +51,8 @@ export class MemorySummarizer {
         );
         summary = response?.content?.trim() ?? '';
         if (summary.length > 0) break;
-      } catch {
-        // Retry on failure
+      } catch (e) {
+        console.debug('summarizer: summarize attempt failed, retrying', (e as Error).message);
       }
       attempts++;
     }

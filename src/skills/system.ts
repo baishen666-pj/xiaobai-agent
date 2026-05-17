@@ -1,8 +1,12 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync, copyFileSync, watchFile, unwatchFile } from 'node:fs';
-import { readFile as readFileAsync, readdir as readdirAsync } from 'node:fs/promises';
+import { existsSync, mkdirSync, watchFile, unwatchFile } from 'node:fs';
+import * as fs from 'node:fs';
+import { readFile as readFileAsync, readdir as readdirAsync, access } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseFrontmatter } from '../utils/frontmatter.js';
+
+const fsp = fs.promises;
+const exists = (p: string) => fsp.access(p).then(() => true, () => false);
 
 export interface Skill {
   name: string;
@@ -54,7 +58,7 @@ export class SkillSystem {
     if (this.loaded) return;
     this.skills.clear();
 
-    if (!existsSync(this.skillsDir)) return;
+    if (!(await exists(this.skillsDir))) return;
 
     const entries = await readdirAsync(this.skillsDir, { withFileTypes: true });
     for (const entry of entries) {
@@ -98,7 +102,7 @@ export class SkillSystem {
 
   private async loadSkillFromDir(dir: string): Promise<Skill | null> {
     const skillPath = join(dir, 'SKILL.md');
-    if (!existsSync(skillPath)) return null;
+    if (!(await exists(skillPath))) return null;
 
     try {
       const content = await readFileAsync(skillPath, 'utf-8');
@@ -176,10 +180,10 @@ export class SkillSystem {
 
   async create(name: string, description: string, category: SkillCategory = 'general', content?: string): Promise<Skill> {
     const dir = join(this.skillsDir, name);
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    if (!(await exists(dir))) await fsp.mkdir(dir, { recursive: true });
 
     const skillContent = content ?? this.generateTemplate(name, description, category);
-    writeFileSync(join(dir, 'SKILL.md'), skillContent, 'utf-8');
+    await fsp.writeFile(join(dir, 'SKILL.md'), skillContent, 'utf-8');
     const skill = this.parseSkillMd(skillContent, dir);
     this.skills.set(skill.name, skill);
     return skill;
@@ -295,11 +299,11 @@ export class SkillSystem {
 
     for (const skillName of toInstall) {
       const srcDir = join(templatesDir, skillName);
-      if (!existsSync(srcDir)) continue;
+      if (!(await exists(srcDir))) continue;
       const destDir = join(this.skillsDir, skillName);
-      if (existsSync(join(destDir, 'SKILL.md'))) continue;
-      mkdirSync(destDir, { recursive: true });
-      copyFileSync(join(srcDir, 'SKILL.md'), join(destDir, 'SKILL.md'));
+      if (await exists(join(destDir, 'SKILL.md'))) continue;
+      await fsp.mkdir(destDir, { recursive: true });
+      await fsp.copyFile(join(srcDir, 'SKILL.md'), join(destDir, 'SKILL.md'));
       installed.push(skillName);
     }
 
@@ -369,7 +373,7 @@ Output: [result]
 
     const newContent = existingContent + addition;
     const dir = join(this.skillsDir, skill.name);
-    writeFileSync(join(dir, 'SKILL.md'), `---
+    await fsp.writeFile(join(dir, 'SKILL.md'), `---
 name: ${skill.name}
 description: ${skill.description}
 category: ${skill.category}

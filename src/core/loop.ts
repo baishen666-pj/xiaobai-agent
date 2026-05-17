@@ -254,6 +254,82 @@ export class AgentLoop {
 
   }
 
+  private parseToolCallStates(
+    toolCallStates: Map<number, { id: string; name: string; args: string }>,
+  ): ToolCall[] {
+    const toolCalls: ToolCall[] = [];
+    for (const [, tc] of toolCallStates) {
+      let parsedArgs: Record<string, unknown> = {};
+      try {
+        parsedArgs = JSON.parse(tc.args || '{}');
+      } catch (e) {
+        console.debug('loop: tool call args parse failed, using raw', (e as Error).message);
+        parsedArgs = { _raw: tc.args };
+      }
+      toolCalls.push({
+        id: tc.id,
+        name: tc.name,
+        arguments: parsedArgs,
+      });
+    }
+    return toolCalls;
+  }
+
+  private recordTokenUsage(
+    state: LoopState,
+    options: LoopOptions,
+    provider: string,
+    model: string,
+    totalTokens: number,
+    lastUsage: { promptTokens: number; completionTokens: number; totalTokens: number } | undefined,
+  ): void {
+    state.totalTokens += totalTokens;
+    if (options.tokenTracker && lastUsage) {
+      options.tokenTracker.recordUsage(provider, model, lastUsage);
+    }
+  }
+
+  private async *handleToolCallTurn(
+    state: LoopState,
+    fullContent: string,
+    toolCalls: ToolCall[],
+    options: LoopOptions,
+  ): AsyncGenerator<LoopEvent, void, void> {
+    state.messages.push({
+      role: 'assistant',
+      content: fullContent || '',
+      toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+    });
+
+    if (toolCalls.length > 0) {
+      const results = await this.executeToolCalls(toolCalls, options);
+      for (const { call, result } of results) {
+        yield {
+          type: 'tool_result',
+          content: result.output,
+          toolName: call.name,
+          result,
+        };
+        state.messages.push({
+          role: 'tool_result',
+          toolCallId: call.id,
+          content: result.output,
+        });
+      }
+    }
+  }
+
+  private *handleCompletionTurn(
+    state: LoopState,
+    fullContent: string,
+  ): Generator<LoopEvent, void, void> {
+    if (fullContent) {
+      state.messages.push({ role: 'assistant', content: fullContent });
+    }
+    state.stopReason = 'completed';
+    yield { type: 'stop', content: 'Task completed' };
+  }
+
   private async *processStreamTurn(
     state: LoopState,
     systemPrompt: string,
@@ -285,7 +361,6 @@ export class AgentLoop {
             yield { type: 'tool_call', content: '', toolName: chunk.toolCallName, toolArgs: {} };
             break;
           case 'tool_call_delta':
-            // Append delta args to the last tool call
             if (chunk.toolCallDelta) {
               for (const [, tc] of toolCallStates) {
                 if (tc.id === chunk.toolCallId) {
@@ -302,60 +377,14 @@ export class AgentLoop {
             }
             break;
           case 'done':
-            state.totalTokens += totalTokens;
+            this.recordTokenUsage(state, options, currentProvider, currentModel, totalTokens, lastUsage);
 
-            if (options.tokenTracker && lastUsage) {
-              options.tokenTracker.recordUsage(currentProvider, currentModel, lastUsage);
-            }
-
-            // Collect completed tool calls from the stream's state
-            const toolCalls: ToolCall[] = [];
-            for (const [, tc] of toolCallStates) {
-              let parsedArgs: Record<string, unknown> = {};
-              try {
-                parsedArgs = JSON.parse(tc.args || '{}');
-              } catch {
-                parsedArgs = { _raw: tc.args };
-              }
-              toolCalls.push({
-                id: tc.id,
-                name: tc.name,
-                arguments: parsedArgs,
-              });
-            }
+            const toolCalls = this.parseToolCallStates(toolCallStates);
 
             if (toolCalls.length > 0 || chunk.stopReason === 'tool_calls' || chunk.stopReason === 'tool_use') {
-              // Need to collect tool calls from stream — they were emitted but not captured
-              // The provider's chatStream emits tool_call_start/delta chunks with the data
-              // We need to reconstruct from the StreamChunk types
-              state.messages.push({
-                role: 'assistant',
-                content: fullContent || '',
-                toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
-              });
-
-              if (toolCalls.length > 0) {
-                const results = await this.executeToolCalls(toolCalls, options);
-                for (const { call, result } of results) {
-                  yield {
-                    type: 'tool_result',
-                    content: result.output,
-                    toolName: call.name,
-                    result,
-                  };
-                  state.messages.push({
-                    role: 'tool_result',
-                    toolCallId: call.id,
-                    content: result.output,
-                  });
-                }
-              }
+              yield* this.handleToolCallTurn(state, fullContent, toolCalls, options);
             } else {
-              if (fullContent) {
-                state.messages.push({ role: 'assistant', content: fullContent });
-              }
-              state.stopReason = 'completed';
-              yield { type: 'stop', content: 'Task completed' };
+              yield* this.handleCompletionTurn(state, fullContent);
             }
             break;
         }
@@ -441,7 +470,8 @@ export class AgentLoop {
     try {
       const context = loadHierarchicalContext(process.cwd());
       return buildContextSystemPrompt(context);
-    } catch {
+    } catch (e) {
+      console.debug('loop: failed to load project context', (e as Error).message);
       return null;
     }
   }

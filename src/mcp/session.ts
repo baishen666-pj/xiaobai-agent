@@ -39,7 +39,8 @@ const PKG_VERSION = (() => {
     const pkgUrl = new URL('../../package.json', import.meta.url);
     const raw = readFileSync(pkgUrl, 'utf-8');
     return (JSON.parse(raw) as { version: string }).version;
-  } catch {
+  } catch (e) {
+    console.debug('mcp: cannot read package.json for version', (e as Error).message);
     return '0.5.0';
   }
 })();
@@ -71,8 +72,8 @@ export class MCPSession {
       for (const server of servers) {
         this.servers.set(server.name, server);
       }
-    } catch {
-      // Invalid config, skip
+    } catch (e) {
+      console.debug('mcp: invalid config file, skipping', (e as Error).message);
     }
   }
 
@@ -374,7 +375,8 @@ export class MCPConnection {
 
       await this.sendNotification('notifications/initialized', {});
       return true;
-    } catch {
+    } catch (e) {
+      console.debug('mcp: connection start failed', (e as Error).message);
       this.alive = false;
       return false;
     }
@@ -404,7 +406,8 @@ export class MCPConnection {
           required: (t.inputSchema?.required as string[]) ?? [],
         },
       }));
-    } catch {
+    } catch (e) {
+      console.debug('mcp: listTools failed', (e as Error).message);
       return [];
     }
   }
@@ -419,7 +422,8 @@ export class MCPConnection {
       if (!caps?.resources) return [];
       const result = await this.sendRequest('resources/list', {}) as { resources?: import('./resources.js').MCPResource[] };
       return result.resources ?? [];
-    } catch {
+    } catch (e) {
+      console.debug('mcp: listResources failed', (e as Error).message);
       return [];
     }
   }
@@ -435,7 +439,8 @@ export class MCPConnection {
       if (!caps?.prompts) return [];
       const result = await this.sendRequest('prompts/list', {}) as { prompts?: import('./prompts.js').MCPPrompt[] };
       return result.prompts ?? [];
-    } catch {
+    } catch (e) {
+      console.debug('mcp: listPrompts failed', (e as Error).message);
       return [];
     }
   }
@@ -507,8 +512,8 @@ export class MCPConnection {
             pending.resolve(response.result);
           }
         }
-      } catch {
-        // Invalid JSON, skip
+      } catch (e) {
+        console.debug('mcp: invalid JSON in message handler', (e as Error).message);
       }
     }
   }
@@ -572,8 +577,8 @@ class MCPSSEConnection extends MCPConnection {
                   try {
                     const jsonRpcResponse = JSON.parse(data) as JsonRpcResponse;
                     this.handleSSEMessage(jsonRpcResponse);
-                  } catch {
-                    // Non-JSON data line, skip
+                  } catch (e) {
+                    console.debug('mcp-sse: non-JSON data line in SSE stream', (e as Error).message);
                   }
                 }
                 currentEvent = '';
@@ -582,8 +587,8 @@ class MCPSSEConnection extends MCPConnection {
               }
             }
           }
-        } catch {
-          // Stream ended or aborted
+        } catch (e) {
+          console.debug('mcp-sse: stream ended or aborted', (e as Error).message);
         } finally {
           this.aliveFlag = false;
         }
@@ -594,7 +599,8 @@ class MCPSSEConnection extends MCPConnection {
       await this.sendSSEInit();
 
       return true;
-    } catch {
+    } catch (e) {
+      console.debug('mcp-sse: SSE connection start failed', (e as Error).message);
       this.aliveFlag = false;
       return false;
     }

@@ -98,12 +98,12 @@ export class KnowledgeBase {
               fileName: entry.name,
             },
           });
-        } catch {
-          // Skip unreadable files
+        } catch (e) {
+          console.debug('knowledge-base: Skip unreadable file', (e as Error).message);
         }
       }
-    } catch {
-      // Skip unreadable directories
+    } catch (e) {
+      console.debug('knowledge-base: Skip unreadable directory', (e as Error).message);
     }
 
     return docs;

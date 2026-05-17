@@ -100,7 +100,8 @@ export function generateDiffPreview(tool: string, args: Record<string, unknown>,
         const oldContent = readFileSync(filePath, 'utf-8');
         const header = chalk.cyan(`  Diff for ${filePath} (existing file):`);
         return header + '\n' + generateDiff(oldContent, newContent, maxLines);
-      } catch {
+      } catch (e) {
+        console.debug('permissions: cannot read existing file for diff', (e as Error).message);
         const header = chalk.cyan(`  Diff for ${filePath} (cannot read existing file):`);
         const preview = newContent.split('\n').slice(0, maxLines);
         const truncated = newContent.split('\n').length > maxLines;

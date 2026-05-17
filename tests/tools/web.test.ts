@@ -189,6 +189,51 @@ describe('Web Tools', () => {
       expect(isUrlSafe('')).toBe(false);
       expect(isUrlSafe('not-a-url')).toBe(false);
     });
+
+    it('blocks link-local / cloud metadata addresses (169.254.x.x)', () => {
+      expect(isUrlSafe('http://169.254.169.254/latest/meta-data/')).toBe(false);
+      expect(isUrlSafe('http://169.254.0.1/')).toBe(false);
+    });
+
+    it('blocks 0.0.x.x addresses', () => {
+      expect(isUrlSafe('http://0.0.0.1/')).toBe(false);
+      expect(isUrlSafe('http://0.0.0.0/')).toBe(false);
+    });
+
+    it('blocks IPv6 loopback and mapped variants', () => {
+      expect(isUrlSafe('http://[::1]/')).toBe(false);
+      expect(isUrlSafe('http://[::]/')).toBe(false);
+      expect(isUrlSafe('http://[::ffff:127.0.0.1]/')).toBe(false);
+      expect(isUrlSafe('http://[::ffff:7f00:1]/')).toBe(false);
+      expect(isUrlSafe('http://[0:0:0:0:0:0:0:0]/')).toBe(false);
+    });
+
+    it('blocks IPv6 link-local addresses', () => {
+      expect(isUrlSafe('http://[fe80::1]/')).toBe(false);
+    });
+
+    it('blocks IPv6 unique local addresses', () => {
+      expect(isUrlSafe('http://[fc00::1]/')).toBe(false);
+      expect(isUrlSafe('http://[fd00::1]/')).toBe(false);
+    });
+
+    it('blocks decimal IP representations', () => {
+      // 2130706433 = 127.0.0.1
+      expect(isUrlSafe('http://2130706433/')).toBe(false);
+      // 2886729728 = 172.16.0.0
+      expect(isUrlSafe('http://2886729728/')).toBe(false);
+    });
+
+    it('blocks octal IP representations', () => {
+      // 0177.0.0.1 = 127.0.0.1
+      expect(isUrlSafe('http://0177.0.0.1/')).toBe(false);
+    });
+
+    it('still allows valid public URLs', () => {
+      expect(isUrlSafe('https://example.com')).toBe(true);
+      expect(isUrlSafe('https://api.github.com/users/test')).toBe(true);
+      expect(isUrlSafe('http://93.184.216.34/')).toBe(true);
+    });
   });
 
   describe('fetchTool', () => {

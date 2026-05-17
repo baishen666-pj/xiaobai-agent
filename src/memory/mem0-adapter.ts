@@ -162,7 +162,8 @@ export class Mem0Backend implements MemoryBackend {
 
       this.cache.set(scope, filtered);
       return filtered;
-    } catch {
+    } catch (e) {
+      console.debug('mem0: list failed, returning empty', (e as Error).message);
       return [];
     }
   }

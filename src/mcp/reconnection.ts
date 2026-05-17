@@ -29,8 +29,8 @@ export class ReconnectionManager {
           this.attemptCount = 0;
           return true;
         }
-      } catch {
-        // Callback failed, continue retrying
+      } catch (e) {
+        console.debug('reconnection: callback failed, will retry', (e as Error).message);
       }
 
       if (this.attemptCount >= this.config.maxRetries) break;

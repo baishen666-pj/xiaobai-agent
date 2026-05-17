@@ -115,7 +115,8 @@ export class CompactionEngine {
         { maxTokens: this.config.summaryMaxTokens },
       );
       return response?.content ?? 'Context summary unavailable';
-    } catch {
+    } catch (e) {
+      console.debug('compaction: summary generation failed, using fallback', (e as Error).message);
       return this.fallbackSummary(messages);
     }
   }

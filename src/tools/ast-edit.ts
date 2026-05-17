@@ -74,15 +74,15 @@ export const astEditTool: Tool = {
     }
 
     try {
-      const { readFileSync, writeFileSync, existsSync } = await import('node:fs');
+      const { readFile: readFileAsync, writeFile: writeFileAsync, access } = await import('node:fs/promises');
       const { resolve } = await import('node:path');
 
       const absPath = resolve(file_path);
-      if (!existsSync(absPath)) {
+      try { await access(absPath); } catch {
         return { output: `File not found: ${absPath}`, success: false, error: 'file_not_found' };
       }
 
-      const source = readFileSync(absPath, 'utf-8');
+      const source = await readFileAsync(absPath, 'utf-8');
 
       let result: string;
 
@@ -119,7 +119,7 @@ export const astEditTool: Tool = {
           return { output: `Unknown operation: ${operation}`, success: false, error: 'unknown_operation' };
       }
 
-      writeFileSync(absPath, result, 'utf-8');
+      await writeFileAsync(absPath, result, 'utf-8');
 
       return {
         output: `AST edit (${operation}) applied to ${absPath}`,

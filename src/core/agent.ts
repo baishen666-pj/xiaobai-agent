@@ -157,8 +157,8 @@ export class XiaobaiAgent {
           tools.registerMcpTool(serverName, tool);
         }
       }
-    } catch {
-      // MCP discovery failure is non-fatal
+    } catch (e) {
+      console.debug('agent: MCP discovery failure (non-fatal)', (e as Error).message);
     }
 
     const skills = new SkillSystem(config.getConfigDir());

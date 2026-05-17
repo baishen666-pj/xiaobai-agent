@@ -54,8 +54,8 @@ export class EmbeddingService {
       }
 
       return embedding;
-    } catch {
-      // Fallback to keyword-based pseudo-embedding when provider doesn't support embeddings
+    } catch (e) {
+      console.debug('embeddings: provider call failed, falling back to keyword embedding', (e as Error).message);
     }
 
     return this.keywordFallback(text, dimensions ?? 384);

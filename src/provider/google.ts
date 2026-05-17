@@ -137,8 +137,8 @@ export class GoogleProvider implements LLMProvider {
           if (candidate.finishReason) {
             yield { type: 'done', stopReason: candidate.finishReason.toLowerCase() };
           }
-        } catch {
-          // skip invalid JSON
+        } catch (e) {
+          console.debug('google: skip invalid JSON in stream chunk', (e as Error).message);
         }
       }
     }
