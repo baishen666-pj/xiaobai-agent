@@ -67,4 +67,88 @@ describe('Session API', () => {
     const parsed = JSON.parse(res.body);
     expect(parsed.deleted).toBe(true);
   });
+
+  it('GET /api/sessions returns 503 when no session manager', async () => {
+    const router = new Router();
+    const deps = {} as any;
+    registerSessionRoutes(router, deps);
+
+    const req = createMockReq('GET', '/api/sessions');
+    const res = createMockRes();
+    await router.handle(req, res);
+
+    expect(res.statusCode).toBe(503);
+    const parsed = JSON.parse(res.body);
+    expect(parsed.error).toContain('not configured');
+  });
+
+  it('GET /api/sessions/:id returns 404 when session not found', async () => {
+    const router = new Router();
+    const deps = {
+      sessions: { loadSessionState: vi.fn(async () => null) },
+    } as any;
+    registerSessionRoutes(router, deps);
+
+    const req = createMockReq('GET', '/api/sessions/nonexistent');
+    const res = createMockRes();
+    await router.handle(req, res);
+
+    expect(res.statusCode).toBe(404);
+    const parsed = JSON.parse(res.body);
+    expect(parsed.error).toContain('not found');
+  });
+
+  it('GET /api/sessions/:id returns 404 when loadSessionState throws', async () => {
+    const router = new Router();
+    const deps = {
+      sessions: { loadSessionState: vi.fn(async () => { throw new Error('corrupt'); }) },
+    } as any;
+    registerSessionRoutes(router, deps);
+
+    const req = createMockReq('GET', '/api/sessions/bad-session');
+    const res = createMockRes();
+    await router.handle(req, res);
+
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('GET /api/sessions/:id returns 503 when no session manager', async () => {
+    const router = new Router();
+    const deps = {} as any;
+    registerSessionRoutes(router, deps);
+
+    const req = createMockReq('GET', '/api/sessions/s1');
+    const res = createMockRes();
+    await router.handle(req, res);
+
+    expect(res.statusCode).toBe(503);
+  });
+
+  it('DELETE /api/sessions/:id returns 503 when no session manager', async () => {
+    const router = new Router();
+    const deps = {} as any;
+    registerSessionRoutes(router, deps);
+
+    const req = createMockReq('DELETE', '/api/sessions/s1');
+    const res = createMockRes();
+    await router.handle(req, res);
+
+    expect(res.statusCode).toBe(503);
+  });
+
+  it('GET /api/sessions returns empty list', async () => {
+    const router = new Router();
+    const deps = {
+      sessions: { listSessions: vi.fn(async () => []) },
+    } as any;
+    registerSessionRoutes(router, deps);
+
+    const req = createMockReq('GET', '/api/sessions');
+    const res = createMockRes();
+    await router.handle(req, res);
+
+    expect(res.statusCode).toBe(200);
+    const parsed = JSON.parse(res.body);
+    expect(parsed.sessions).toEqual([]);
+  });
 });

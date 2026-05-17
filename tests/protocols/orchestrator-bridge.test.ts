@@ -75,4 +75,50 @@ describe('RemoteAgentBridge', () => {
     expect(result.success).toBe(false);
     expect(result.error).toBeDefined();
   });
+
+  it('returns null from discoverAgent for ACP agent (no client)', async () => {
+    await bridge.registerAgent({
+      url: 'http://localhost:19999',
+      protocol: 'acp',
+      name: 'acp-no-discover',
+    });
+
+    const card = await bridge.discoverAgent('acp-no-discover');
+    expect(card).toBeNull();
+  });
+
+  it('returns null from discoverAgent for unregistered agent', async () => {
+    const card = await bridge.discoverAgent('nonexistent');
+    expect(card).toBeNull();
+  });
+
+  it('returns null from discoverAgent when discovery fails', async () => {
+    await bridge.registerAgent({
+      url: 'http://localhost:19999',
+      protocol: 'a2a',
+      name: 'dead-discover',
+    });
+
+    const card = await bridge.discoverAgent('dead-discover');
+    expect(card).toBeNull();
+  });
+
+  it('lists multiple agents', async () => {
+    await bridge.registerAgent({ url: 'http://localhost:4120', protocol: 'a2a', name: 'agent-1' });
+    await bridge.registerAgent({ url: 'http://localhost:4121', protocol: 'acp', name: 'agent-2' });
+
+    const agents = bridge.listAgents();
+    expect(agents).toHaveLength(2);
+    expect(agents.map(a => a.name)).toContain('agent-1');
+    expect(agents.map(a => a.name)).toContain('agent-2');
+  });
+
+  it('overwrites agent on re-register', async () => {
+    await bridge.registerAgent({ url: 'http://localhost:4120', protocol: 'a2a', name: 'dup' });
+    await bridge.registerAgent({ url: 'http://localhost:4121', protocol: 'acp', name: 'dup' });
+
+    const agents = bridge.listAgents();
+    expect(agents).toHaveLength(1);
+    expect(agents[0].protocol).toBe('acp');
+  });
 });

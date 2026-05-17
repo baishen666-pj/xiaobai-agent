@@ -144,6 +144,35 @@ describe('A2AClient - extended coverage', () => {
     const response = await client.sendMessage('Hello', { contextId: 'ctx-123' });
     expect(response).toHaveProperty('task');
   });
+
+  it('listTasks returns tasks from server', async () => {
+    const port = getTestPort();
+    server = new A2AServer({ port });
+    await server.start();
+
+    const client = new A2AClient(server.getUrl());
+    const result = await client.listTasks();
+    expect(result).toHaveProperty('tasks');
+  });
+
+  it('listTasks sends filter parameters', async () => {
+    const port = getTestPort();
+    server = new A2AServer({ port });
+    await server.start();
+
+    const client = new A2AClient(server.getUrl());
+    const result = await client.listTasks({ status: 'completed', limit: 10, offset: 0 });
+    expect(result).toHaveProperty('tasks');
+  });
+
+  it('throws on listTasks failure', async () => {
+    const port = getTestPort();
+    server = new A2AServer({ port });
+    await server.start();
+
+    const client = new A2AClient(`http://localhost:${port + 1}`);
+    await expect(client.listTasks()).rejects.toThrow();
+  });
 });
 
 describe('A2AServer - extended coverage', () => {

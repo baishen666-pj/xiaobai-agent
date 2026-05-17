@@ -83,11 +83,11 @@ describe('E2E: DashboardServer + WebSocket', () => {
     await server.start();
 
     const response = await fetch(`${server.getHttpUrl()}/health`);
-    const body = await response.json() as { status: string; clients: number };
+    const body = await response.json() as { status: string; details: { clients: number } };
 
     expect(response.status).toBe(200);
-    expect(body.status).toBe('ok');
-    expect(body.clients).toBe(0);
+    expect(body.status).toBe('healthy');
+    expect(body.details.clients).toBe(0);
   });
 
   it('accepts WebSocket connection', async () => {
@@ -97,8 +97,11 @@ describe('E2E: DashboardServer + WebSocket', () => {
     const ws = await wsConnect(server.getUrl());
     expect(ws.readyState).toBe(WebSocket.OPEN);
 
-    const health = await (await fetch(`${server.getHttpUrl()}/health`)).json() as { clients: number };
-    expect(health.clients).toBe(1);
+    // Wait a tick for the server to register the client
+    await new Promise((r) => setTimeout(r, 100));
+
+    const health = await (await fetch(`${server.getHttpUrl()}/health`)).json() as { details: { clients: number } };
+    expect(health.details.clients).toBe(1);
 
     ws.close();
   });
@@ -345,6 +348,6 @@ describe('E2E: Server lifecycle', () => {
     );
 
     const results = await Promise.all(requests);
-    expect(results.every((r) => r.status === 'ok')).toBe(true);
+    expect(results.every((r) => r.status === 'healthy')).toBe(true);
   });
 });

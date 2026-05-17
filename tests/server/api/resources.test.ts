@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { registerResourceRoutes } from '../../../src/server/api/resources.js';
 import { Router } from '../../../src/server/router.js';
+import { ProviderRouter } from '../../../src/provider/router.js';
 import type { IncomingMessage } from 'node:http';
 
 vi.mock('../../../src/provider/router.js', () => ({
@@ -65,5 +66,43 @@ describe('Resource API', () => {
 
     const parsed = JSON.parse(res.body);
     expect(parsed.plugins).toHaveLength(1);
+  });
+
+  it('GET /api/tools returns empty array when no tools', async () => {
+    const router = new Router();
+    const deps = {} as any;
+    registerResourceRoutes(router, deps);
+
+    const req = createMockReq('GET', '/api/tools');
+    const res = createMockRes();
+    await router.handle(req, res);
+
+    const parsed = JSON.parse(res.body);
+    expect(parsed.tools).toEqual([]);
+  });
+
+  it('GET /api/plugins returns empty array when no plugins', async () => {
+    const router = new Router();
+    const deps = {} as any;
+    registerResourceRoutes(router, deps);
+
+    const req = createMockReq('GET', '/api/plugins');
+    const res = createMockRes();
+    await router.handle(req, res);
+
+    const parsed = JSON.parse(res.body);
+    expect(parsed.plugins).toEqual([]);
+  });
+
+  it('GET /api/models calls ProviderRouter.getAvailableProviders', async () => {
+    const router = new Router();
+    const deps = {} as any;
+    registerResourceRoutes(router, deps);
+
+    const req = createMockReq('GET', '/api/models');
+    const res = createMockRes();
+    await router.handle(req, res);
+
+    expect(ProviderRouter.getAvailableProviders).toHaveBeenCalled();
   });
 });

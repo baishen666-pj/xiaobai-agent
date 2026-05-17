@@ -177,6 +177,15 @@ vi.mock('node:readline', () => ({
 
 vi.mock('dotenv/config', () => ({}));
 
+vi.mock('../../src/plugins/unified-marketplace.js', () => ({
+  UnifiedMarketplace: vi.fn().mockImplementation(() => ({
+    search: vi.fn(async () => []),
+    browse: vi.fn(async () => []),
+    getStats: vi.fn(() => ({ total: 0, installed: 0 })),
+    formatList: vi.fn(() => ''),
+  })),
+}));
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -459,6 +468,36 @@ describe('CLI index.ts', () => {
     });
   });
 
+  describe('plugins search', () => {
+    it('shows search results or no results', async () => {
+      await findSubCmd('plugins', 'search').parseAsync(['node', 'xiaobai', 'weather']);
+      const o = output();
+      expect(o.includes('No') || o.includes('weather') || o.includes('Search') || o.includes('Plugin')).toBe(true);
+    });
+  });
+
+  describe('plugins browse', () => {
+    it('shows browse results or empty', async () => {
+      await findSubCmd('plugins', 'browse').parseAsync(['node', 'xiaobai']);
+      const o = output();
+      expect(o.includes('No plugins') || o.includes('Plugin') || o.includes('Browse')).toBe(true);
+    });
+  });
+
+  describe('plugins activate', () => {
+    it('shows not enabled', async () => {
+      await findSubCmd('plugins', 'activate').parseAsync(['node', 'xiaobai', 'test-plugin']);
+      expect(output()).toContain('not enabled');
+    });
+  });
+
+  describe('plugins deactivate', () => {
+    it('shows not enabled', async () => {
+      await findSubCmd('plugins', 'deactivate').parseAsync(['node', 'xiaobai', 'test-plugin']);
+      expect(output()).toContain('not enabled');
+    });
+  });
+
   // =========================================================================
   // chat command
   // =========================================================================
@@ -715,8 +754,8 @@ describe('CLI index.ts', () => {
       }
     });
 
-    it('version is 0.6.0', () => {
-      expect(runCLI('--version').trim()).toBe('0.6.0');
+    it('version is 0.7.0', () => {
+      expect(runCLI('--version').trim()).toBe('0.7.0');
     });
   });
 });
