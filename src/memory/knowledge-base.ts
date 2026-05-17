@@ -2,10 +2,12 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, extname } from 'node:path';
 import type { ProviderRouter } from '../provider/router.js';
 import { RAGEngine, type RAGDocument, type RAGContext } from './rag.js';
+import type { VectorStoreAdapter } from './vector-store.js';
 
 export interface KnowledgeBaseConfig {
   knowledgeDir?: string;
   supportedExtensions?: string[];
+  vectorAdapter?: VectorStoreAdapter;
   rag?: {
     topK?: number;
     minScore?: number;
@@ -23,7 +25,7 @@ export class KnowledgeBase {
   constructor(provider: ProviderRouter, config?: KnowledgeBaseConfig) {
     this.knowledgeDir = config?.knowledgeDir ?? join(process.cwd(), '.xiaobai', 'knowledge');
     this.supportedExtensions = config?.supportedExtensions ?? ['.md', '.txt', '.json'];
-    this.engine = new RAGEngine(provider, config?.rag);
+    this.engine = new RAGEngine(provider, config?.rag, config?.vectorAdapter);
   }
 
   async loadAll(): Promise<number> {

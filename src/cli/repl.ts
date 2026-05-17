@@ -84,6 +84,13 @@ export function registerChatCommand(program: Command): Command {
         if (options.dashboard) {
           const port = parseInt(options.dashboard, 10) || 3001;
           dashServer = new DashboardServer({ port });
+
+          // Wire API gateway
+          const { ApiGateway } = await import('../server/gateway.js');
+          const gateway = new ApiGateway({ enabled: true });
+          gateway.registerRoutes(agent.getDeps());
+          dashServer.setGateway(gateway);
+
           await dashServer.start();
           chatListener = dashServer.getBridge().createChatListener('default');
           console.log(chalk.gray(`  Dashboard: ${dashServer.getHttpUrl()}\n`));

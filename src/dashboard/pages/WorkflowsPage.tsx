@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { createApiClient, type ApiError } from '../lib/api.js';
 import type { WorkflowSummary, WorkflowRunResult } from '../types.js';
+import { WorkflowDagView } from '../components/WorkflowDagView.js';
 
 const api = createApiClient();
 
@@ -136,6 +137,16 @@ export function WorkflowsPage() {
               {runResult && (
                 <div className="workflow-run-result">
                   <h3>Run Result</h3>
+                  <WorkflowDagView
+                    steps={Object.entries(runResult.stepResults).map(([id, result]) => {
+                      const r = result as { status?: string; output?: string };
+                      return {
+                        id,
+                        type: 'agent' as const,
+                        status: (r.status === 'completed' ? 'completed' : r.status === 'failed' ? 'failed' : 'completed') as 'completed' | 'failed' | 'running' | 'pending',
+                      };
+                    })}
+                  />
                   <div className="run-result-meta">
                     <span>Status: <strong>{runResult.status}</strong></span>
                     <span>Run ID: {runResult.runId}</span>

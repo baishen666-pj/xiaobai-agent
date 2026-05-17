@@ -7,6 +7,7 @@ import { SessionsPage } from './pages/SessionsPage.js';
 import { WorkflowsPage } from './pages/WorkflowsPage.js';
 import { PlaygroundPage } from './pages/PlaygroundPage.js';
 import { HealthPage } from './pages/HealthPage.js';
+import { RemoteAgentsPage } from './pages/RemoteAgentsPage.js';
 import './App.css';
 
 export function App() {
@@ -21,6 +22,7 @@ export function App() {
               <Route path="/agents" element={<AgentsPage />} />
               <Route path="/sessions" element={<SessionsPage />} />
               <Route path="/workflows" element={<WorkflowsPage />} />
+              <Route path="/remote-agents" element={<RemoteAgentsPage />} />
               <Route path="/playground" element={<PlaygroundPage />} />
               <Route path="/health" element={<HealthPage />} />
             </Routes>

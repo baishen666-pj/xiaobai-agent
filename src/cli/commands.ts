@@ -32,6 +32,13 @@ export function registerExecCommand(program: Command): Command {
         if (options.dashboard) {
           const port = parseInt(options.dashboard, 10) || 3001;
           dashServer = new DashboardServer({ port });
+
+          // Wire API gateway
+          const { ApiGateway } = await import('../server/gateway.js');
+          const gateway = new ApiGateway({ enabled: true });
+          gateway.registerRoutes(agent.getDeps());
+          dashServer.setGateway(gateway);
+
           await dashServer.start();
           chatListener = dashServer.getBridge().createChatListener('exec');
           console.log(chalk.gray(`Dashboard: ${dashServer.getHttpUrl()}`));
@@ -118,6 +125,14 @@ export function registerDashboardCommand(program: Command): Command {
       const port = parseInt(options.port, 10);
 
       const server = new DashboardServer({ port, staticDir: undefined });
+
+      // Wire API gateway so REST routes are accessible
+      const agent = await XiaobaiAgent.create();
+      const { ApiGateway } = await import('../server/gateway.js');
+      const gateway = new ApiGateway({ enabled: true });
+      gateway.registerRoutes(agent.getDeps());
+      server.setGateway(gateway);
+
       await server.start();
 
       const httpUrl = server.getHttpUrl();
@@ -126,6 +141,7 @@ export function registerDashboardCommand(program: Command): Command {
       console.log(chalk.cyan.bold('\n  Xiaobai Dashboard'));
       console.log(chalk.gray(`  HTTP:  ${httpUrl}`));
       console.log(chalk.gray(`  WS:    ${wsUrl}`));
+      console.log(chalk.gray(`  API:   ${httpUrl}/api/docs`));
       console.log(chalk.gray(`  Health: ${httpUrl}/health\n`));
 
       if (options.open) {
@@ -159,6 +175,13 @@ export function registerRunCommand(program: Command): Command {
 
         if (options.port) {
           server = new DashboardServer({ port: parseInt(options.port, 10) });
+
+          // Wire API gateway
+          const { ApiGateway } = await import('../server/gateway.js');
+          const gateway = new ApiGateway({ enabled: true });
+          gateway.registerRoutes(agent.getDeps());
+          server.setGateway(gateway);
+
           await server.start();
           console.log(chalk.gray(`Dashboard: ${server.getHttpUrl()}`));
         }
@@ -756,6 +779,29 @@ export function registerRemoteAgentsCommand(program: Command): Command {
           console.log();
         }),
     );
+
+  return program;
+}
+
+export function registerMcpServerCommand(program: Command): Command {
+  program
+    .command('mcp-server')
+    .description('Start as MCP server (stdio or HTTP)')
+    .option('--transport <type>', 'Transport: stdio | http', 'stdio')
+    .option('--port <port>', 'HTTP port (default 3002)', '3002')
+    .action(async (options: Record<string, string>) => {
+      const agent = await XiaobaiAgent.create();
+      const { XiaobaiMcpServer } = await import('../mcp/server.js');
+      const mcpServer = new XiaobaiMcpServer(agent);
+
+      if (options.transport === 'http') {
+        const port = parseInt(options.port, 10) || 3002;
+        await mcpServer.startHttp(port);
+        console.log(chalk.gray(`MCP server listening on http://localhost:${port}`));
+      } else {
+        await mcpServer.startStdio();
+      }
+    });
 
   return program;
 }

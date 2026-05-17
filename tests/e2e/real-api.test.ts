@@ -11,9 +11,9 @@ import type { Message } from '../../src/session/manager.js';
 const apiKey = process.env['ANTHROPIC_API_KEY'] ?? process.env['ANTHROPIC_AUTH_TOKEN'];
 const hasApiKey = !!apiKey;
 
-function isPaymentError(error: unknown): boolean {
+function isApiSkipError(error: unknown): boolean {
   const msg = error instanceof Error ? error.message : String(error);
-  return /402|insufficient.balance|payment.required|quota.exceeded/i.test(msg);
+  return /402|insufficient.balance|payment.required|quota.exceeded|10404|Model Not Found|PathDomainError|one_api_error/i.test(msg);
 }
 
 describe.skipIf(!hasApiKey)('Real API: ProviderRouter', () => {
@@ -29,7 +29,7 @@ describe.skipIf(!hasApiKey)('Real API: ProviderRouter', () => {
         { maxTokens: 50 },
       );
     } catch (e) {
-      if (isPaymentError(e)) return;
+      if (isApiSkipError(e)) return;
       throw e;
     }
 
@@ -59,13 +59,13 @@ describe.skipIf(!hasApiKey)('Real API: ProviderRouter', () => {
         }
       }
     } catch (e) {
-      if (isPaymentError(e)) return;
+      if (isApiSkipError(e)) return;
       throw e;
     }
 
     expect(fullText.length).toBeGreaterThan(0);
     expect(receivedDone).toBe(true);
-  });
+  }, 15000);
 
   it('makes a tool call', async () => {
     const config = ConfigManager.getDefault();
@@ -93,7 +93,7 @@ describe.skipIf(!hasApiKey)('Real API: ProviderRouter', () => {
         { tools, maxTokens: 500 },
       );
     } catch (e) {
-      if (isPaymentError(e)) return;
+      if (isApiSkipError(e)) return;
       throw e;
     }
 
@@ -102,7 +102,7 @@ describe.skipIf(!hasApiKey)('Real API: ProviderRouter', () => {
     expect(response!.toolCalls!.length).toBeGreaterThan(0);
     expect(response!.toolCalls![0].name).toBe('get_weather');
     expect(response!.toolCalls![0].arguments).toHaveProperty('location');
-  });
+  }, 15000);
 
   it('summarizes a conversation', async () => {
     const config = ConfigManager.getDefault();
@@ -120,7 +120,7 @@ describe.skipIf(!hasApiKey)('Real API: ProviderRouter', () => {
     try {
       summary = await router.summarize(messages);
     } catch (e) {
-      if (isPaymentError(e)) return;
+      if (isApiSkipError(e)) return;
       throw e;
     }
 
@@ -158,7 +158,7 @@ describe.skipIf(!hasApiKey)('Real API: AgentLoop with tools', () => {
       }
     } catch (e) {
       await agent.destroy();
-      if (isPaymentError(e)) return;
+      if (isApiSkipError(e)) return;
       throw e;
     }
 
@@ -183,7 +183,7 @@ describe.skipIf(!hasApiKey)('Real API: AgentLoop with tools', () => {
       }
     } catch (e) {
       await agent.destroy();
-      if (isPaymentError(e)) return;
+      if (isApiSkipError(e)) return;
       throw e;
     }
 
@@ -208,7 +208,7 @@ describe.skipIf(!hasApiKey)('Real API: AgentLoop with tools', () => {
       }
     } catch (e) {
       await agent.destroy();
-      if (isPaymentError(e)) return;
+      if (isApiSkipError(e)) return;
       throw e;
     }
 

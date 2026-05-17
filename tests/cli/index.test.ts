@@ -100,6 +100,7 @@ vi.mock('../../src/server/index.js', () => ({
     getBridge: vi.fn().mockReturnValue({
       createChatListener: vi.fn().mockReturnValue(vi.fn()),
     }),
+    setGateway: vi.fn(),
     attachOrchestrator: vi.fn(),
     getPort: vi.fn().mockReturnValue(3001),
   })),
@@ -754,8 +755,8 @@ describe('CLI index.ts', () => {
       }
     });
 
-    it('version is 0.8.0', () => {
-      expect(runCLI('--version').trim()).toBe('0.8.0');
+    it('version is 0.9.0', () => {
+      expect(runCLI('--version').trim()).toBe('0.9.0');
     });
   });
 });

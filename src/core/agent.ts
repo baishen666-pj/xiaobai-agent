@@ -10,7 +10,9 @@ import { MCPSession, createMCPTools } from '../mcp/session.js';
 import { SandboxManager } from '../sandbox/manager.js';
 import { SkillSystem } from '../skills/system.js';
 import { KnowledgeBase } from '../memory/knowledge-base.js';
+import type { VectorStoreAdapter } from '../memory/vector-store.js';
 import type { PluginManager } from '../plugins/manager.js';
+import type { XiaobaiConfig } from '../config/manager.js';
 import { join } from 'node:path';
 import { FileWatcher, type FileWatcherOptions } from '../tools/file-watcher.js';
 
@@ -165,8 +167,11 @@ export class XiaobaiAgent {
     const builtInTools = await import('../tools/builtin.js');
 
     // Initialize knowledge base (non-fatal)
+    const needsExternalAdapter = cfg.persistence?.adapter === 'chroma' || cfg.persistence?.adapter === 'qdrant';
+    const vectorAdapter = needsExternalAdapter ? await createVectorAdapter(cfg) : undefined;
     const kb = new KnowledgeBase(provider, {
       knowledgeDir: join(config.getConfigDir(), 'knowledge'),
+      ...(vectorAdapter ? { vectorAdapter } : {}),
     });
 
     tools.registerBatch(builtInTools.getBuiltinTools({ security, config, memory, sandbox, tools, knowledge: kb }));
@@ -232,4 +237,23 @@ export class XiaobaiAgent {
       plugins,
     }, kb);
   }
+}
+
+async function createVectorAdapter(cfg: XiaobaiConfig): Promise<VectorStoreAdapter> {
+  const p = cfg.persistence;
+  if (p?.adapter === 'chroma') {
+    const { ChromaDBAdapter } = await import('../memory/adapters/chroma-adapter.js');
+    return new ChromaDBAdapter({
+      baseUrl: p.chromaUrl,
+      collection: p.chromaCollection ?? 'xiaobai_vectors',
+    });
+  }
+  if (p?.adapter === 'qdrant') {
+    const { QdrantAdapter } = await import('../memory/adapters/qdrant-adapter.js');
+    return new QdrantAdapter({
+      baseUrl: p.qdrantUrl,
+      collection: p.qdrantCollection ?? 'xiaobai_vectors',
+    });
+  }
+  throw new Error(`Unknown persistence adapter: ${p?.adapter}`);
 }

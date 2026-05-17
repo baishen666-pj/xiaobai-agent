@@ -8,6 +8,7 @@ import {
   WorkflowIcon,
   PlaygroundIcon,
   HealthIcon,
+  RemoteAgentIcon,
 } from './Icons.js';
 import { ThemeToggle } from './ThemeToggle.js';
 
@@ -16,6 +17,7 @@ const links = [
   { to: '/agents', icon: UsersIcon, label: 'Agents' },
   { to: '/sessions', icon: SessionsIcon, label: 'Sessions' },
   { to: '/workflows', icon: WorkflowIcon, label: 'Workflows' },
+  { to: '/remote-agents', icon: RemoteAgentIcon, label: 'Remote Agents' },
   { to: '/playground', icon: PlaygroundIcon, label: 'Playground' },
   { to: '/health', icon: HealthIcon, label: 'Health' },
 ] as const;

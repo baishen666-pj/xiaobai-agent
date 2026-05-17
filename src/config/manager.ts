@@ -65,8 +65,12 @@ export interface XiaobaiConfig {
   };
   persistence?: {
     enabled?: boolean;
-    adapter?: 'json' | 'sqlite' | 'memory';
+    adapter?: 'json' | 'sqlite' | 'memory' | 'chroma' | 'qdrant';
     path?: string;
+    chromaUrl?: string;
+    chromaCollection?: string;
+    qdrantUrl?: string;
+    qdrantCollection?: string;
   };
   server?: {
     sseEnabled?: boolean;

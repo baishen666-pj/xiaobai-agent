@@ -18,10 +18,10 @@ function renderSidebar(path = '/') {
 }
 
 describe('Sidebar', () => {
-  it('renders all 6 navigation links', () => {
+  it('renders all 7 navigation links', () => {
     renderSidebar();
     const links = screen.getAllByRole('link');
-    expect(links).toHaveLength(6);
+    expect(links).toHaveLength(7);
   });
 
   it('renders link labels', () => {
@@ -30,6 +30,7 @@ describe('Sidebar', () => {
     expect(screen.getByText('Agents')).toBeTruthy();
     expect(screen.getByText('Sessions')).toBeTruthy();
     expect(screen.getByText('Workflows')).toBeTruthy();
+    expect(screen.getByText('Remote Agents')).toBeTruthy();
     expect(screen.getByText('Playground')).toBeTruthy();
     expect(screen.getByText('Health')).toBeTruthy();
   });

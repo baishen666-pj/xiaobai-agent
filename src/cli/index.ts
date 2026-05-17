@@ -13,6 +13,7 @@ import {
   registerPluginsCommand,
   registerWorkflowCommand,
   registerRemoteAgentsCommand,
+  registerMcpServerCommand,
 } from './commands.js';
 
 const program = new Command();
@@ -20,7 +21,7 @@ const program = new Command();
 program
   .name('xiaobai')
   .description('Xiaobai - A fusion AI agent combining the best of Hermes, OpenClaw, Claude Code, and Codex')
-  .version('0.8.0');
+  .version('0.9.0');
 
 registerChatCommand(program);
 registerExecCommand(program);
@@ -33,6 +34,7 @@ registerSkillsCommand(program);
 registerPluginsCommand(program);
 registerWorkflowCommand(program);
 registerRemoteAgentsCommand(program);
+registerMcpServerCommand(program);
 
 export { program };
 
