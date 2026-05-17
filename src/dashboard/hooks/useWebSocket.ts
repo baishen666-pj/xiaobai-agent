@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import type { DashboardState, TypedWSMessage, LogEvent, AgentInfo, TaskInfo, TokenHistoryEntry, ChatMessage } from '../types.js';
+import type { DashboardState, TypedWSMessage, LogEvent, AgentInfo, TaskInfo, TokenHistoryEntry, ChatMessage, ClientMessage as ClientMessageProto, ServerAck as ServerAckProto } from '../types.js';
 import type { PlanEventData, TaskStartedEventData, TaskProgressEventData, TaskCompletedEventData, TaskFailedEventData, AgentStatusEventData, ChatStartEventData, ChatTurnEventData, ChatToolCallEventData, ChatToolResultEventData, ChatStopEventData, ChatErrorEventData } from '../types.js';
 import { upsertAgent } from '../types.js';
 
@@ -309,6 +309,12 @@ export function useWebSocket(url: string) {
     wsRef.current = null;
   }, []);
 
+  const send = useCallback((msg: ClientMessageProto) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify(msg));
+    }
+  }, []);
+
   useEffect(() => {
     return () => {
       shouldReconnectRef.current = false;
@@ -323,6 +329,7 @@ export function useWebSocket(url: string) {
     ...state,
     connect,
     disconnect,
+    send,
     setEventFilter,
   };
 }

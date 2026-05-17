@@ -1,10 +1,12 @@
+import { useState } from 'react';
 import { useLocalStorage } from './hooks/useLocalStorage.js';
 import { useWebSocket, type OrchestratorWSMessage } from './hooks/useWebSocket.js';
 import { AgentStatusPanel } from './components/AgentStatusPanel.js';
+import { AgentControlPanel } from './components/AgentControlPanel.js';
 import { TaskFlowView } from './components/TaskFlowView.js';
 import { TokenUsageChart } from './components/TokenUsageChart.js';
 import { EventLog } from './components/EventLog.js';
-import { ChatEventPanel } from './components/ChatEventPanel.js';
+import { ChatPanel } from './components/ChatPanel.js';
 import { EventFilterBar } from './components/EventFilterBar.js';
 import { ThemeToggle } from './components/ThemeToggle.js';
 import { ChartPanel } from './components/ChartPanel.js';
@@ -18,8 +20,10 @@ export function App() {
     connected, events, agents, tasks, tokenTotal,
     chatMessages, chatTokenTotal, eventFilter,
     tokenHistory, progressEvents,
-    connect, disconnect, setEventFilter,
+    connect, disconnect, send, setEventFilter,
   } = useWebSocket(url);
+
+  const [activeSessionId, setActiveSessionId] = useState('');
 
   const filteredEvents = eventFilter === 'all' ? events :
     eventFilter === 'error' ? events.filter((e) => e.type.includes('error') || e.type.includes('fail')) :
@@ -67,6 +71,13 @@ export function App() {
         <section className="panel agents-panel">
           <h2>Agents</h2>
           <AgentStatusPanel agents={agents} />
+          <AgentControlPanel
+            send={send}
+            connected={connected}
+            agents={agents}
+            sessionId={activeSessionId}
+            onSessionChange={setActiveSessionId}
+          />
         </section>
 
         <section className="panel tasks-panel">
@@ -76,7 +87,13 @@ export function App() {
 
         <section className="panel chat-panel">
           <h2>Chat</h2>
-          <ChatEventPanel messages={chatMessages} tokenTotal={chatTokenTotal} />
+          <ChatPanel
+            messages={chatMessages}
+            tokenTotal={chatTokenTotal}
+            send={send}
+            connected={connected}
+            sessionId={activeSessionId}
+          />
         </section>
 
         <section className="panel tokens-panel">
