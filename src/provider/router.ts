@@ -5,7 +5,7 @@ import type { ProviderResponse, StreamChunk, ChatOptions, ProviderConfig, Embedd
 import { AnthropicProvider } from './anthropic.js';
 import { OpenAICompatibleProvider } from './openai.js';
 import { GoogleProvider } from './google.js';
-import { CircuitBreaker } from './circuit-breaker.js';
+import { CircuitBreaker, type CircuitBreakerConfig } from './circuit-breaker.js';
 import { RateLimiter } from './rate-limiter.js';
 import { ProviderMetrics } from './provider-metrics.js';
 
@@ -41,7 +41,7 @@ const PROVIDER_FACTORIES: Record<string, (config: ProviderConfig) => LLMProvider
 };
 
 export interface RouterOptions {
-  circuitBreaker?: CircuitBreaker;
+  circuitBreakerConfig?: Partial<CircuitBreakerConfig>;
   rateLimiter?: RateLimiter;
   metrics?: ProviderMetrics;
 }
@@ -50,15 +50,26 @@ export class ProviderRouter {
   private config: XiaobaiConfig;
   private providers = new Map<string, LLMProvider>();
   private pluginFactories = new Map<string, (config: ProviderConfig) => LLMProvider>();
-  private circuitBreaker?: CircuitBreaker;
+  private circuitBreakerConfig?: Partial<CircuitBreakerConfig>;
+  private circuitBreakers = new Map<string, CircuitBreaker>();
   private rateLimiter?: RateLimiter;
   private metrics?: ProviderMetrics;
 
   constructor(config: XiaobaiConfig, options?: RouterOptions) {
     this.config = config;
-    this.circuitBreaker = options?.circuitBreaker;
+    this.circuitBreakerConfig = options?.circuitBreakerConfig;
     this.rateLimiter = options?.rateLimiter;
     this.metrics = options?.metrics;
+  }
+
+  private getBreaker(name: string): CircuitBreaker | undefined {
+    if (!this.circuitBreakerConfig) return undefined;
+    let breaker = this.circuitBreakers.get(name);
+    if (!breaker) {
+      breaker = new CircuitBreaker(this.circuitBreakerConfig);
+      this.circuitBreakers.set(name, breaker);
+    }
+    return breaker;
   }
 
   registerProviderFactory(name: string, factory: (config: ProviderConfig) => LLMProvider): void {
@@ -162,8 +173,9 @@ export class ProviderRouter {
     options: ChatOptions,
     attempt = 0,
   ): Promise<ProviderResponse> {
+    const breaker = this.getBreaker(providerName);
     // Circuit breaker check
-    if (this.circuitBreaker && !this.circuitBreaker.isAvailable()) {
+    if (breaker && !breaker.isAvailable()) {
       const fallback = await this.tryFallbackProvider(messages, options);
       if (fallback) return fallback;
       throw new Error(`Circuit breaker open for ${providerName}, no fallback available`);
@@ -171,16 +183,16 @@ export class ProviderRouter {
 
     const start = Date.now();
     try {
-      if (this.circuitBreaker) this.circuitBreaker.beginHalfOpenAttempt();
+      if (breaker) breaker.beginHalfOpenAttempt();
       const provider = this.getProvider(providerName);
       const response = await provider.chat(messages, model, options);
 
-      this.circuitBreaker?.recordSuccess();
+      breaker?.recordSuccess();
       this.recordMetrics(providerName, model, start, response, true);
 
       return response;
     } catch (error) {
-      this.circuitBreaker?.recordFailure();
+      breaker?.recordFailure();
       this.recordMetrics(providerName, model, start, null, false, error);
 
       if (attempt >= MAX_RETRIES - 1 || !this.isRetryable(error)) {
@@ -218,11 +230,11 @@ export class ProviderRouter {
         const provider = this.getProvider(fb.name);
         const model = this.config.model.default;
         const response = await provider.chat(messages, model, options);
-        this.circuitBreaker?.recordSuccess();
+        this.getBreaker(fb.name)?.recordSuccess();
         this.recordMetrics(fb.name, model, Date.now(), response, true);
         return response;
       } catch {
-        this.circuitBreaker?.recordFailure();
+        this.getBreaker(fb.name)?.recordFailure();
       }
     }
     return null;

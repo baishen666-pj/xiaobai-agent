@@ -6,6 +6,7 @@ import { join, resolve, sep, extname, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EventBridge } from './eventBridge.js';
 import type { Orchestrator, OrchestratorEvent } from '../core/orchestrator.js';
+import { createAuthChecker, type AuthConfig } from '../security/auth.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -35,6 +36,7 @@ export interface DashboardServerOptions {
   port?: number;
   host?: string;
   staticDir?: string;
+  auth?: AuthConfig;
 }
 
 export class DashboardServer {
@@ -44,11 +46,13 @@ export class DashboardServer {
   private port: number;
   private host: string;
   private staticDir: string;
+  private checkAuth: (req: IncomingMessage) => boolean;
 
   constructor(options: DashboardServerOptions = {}) {
     this.port = options.port ?? 3001;
     this.host = options.host ?? '0.0.0.0';
     this.staticDir = resolveStaticDir(options.staticDir);
+    this.checkAuth = createAuthChecker(options.auth ?? {});
     this.bridge = new EventBridge();
 
     this.httpServer = createServer((req, res) => {
@@ -57,7 +61,12 @@ export class DashboardServer {
 
     this.wss = new WebSocketServer({ server: this.httpServer });
 
-    this.wss.on('connection', (ws) => {
+    this.wss.on('connection', (ws, req) => {
+      if (!this.checkAuth(req as any)) {
+        ws.close(4001, 'Unauthorized');
+        return;
+      }
+
       this.bridge.addClient(ws);
 
       ws.on('message', (data) => {
@@ -73,6 +82,12 @@ export class DashboardServer {
 
   private async handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const url = req.url?.split('?')[0] ?? '/';
+
+    if (!this.checkAuth(req)) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Unauthorized' }));
+      return;
+    }
 
     if (url === '/health') {
       res.writeHead(200, { 'Content-Type': 'application/json' });

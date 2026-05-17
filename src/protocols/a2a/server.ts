@@ -9,6 +9,7 @@ import type {
 } from './types.js';
 import { TaskState as TS, Role } from './types.js';
 import type { XiaobaiAgent } from '../../core/agent.js';
+import { createAuthChecker, type AuthConfig } from '../../security/auth.js';
 
 export interface A2AServerHandler {
   onMessage(message: A2AMessage, config?: SendMessageRequest['configuration']): Promise<SendMessageResponse>;
@@ -41,9 +42,11 @@ export class A2AServer {
   private server: ReturnType<typeof createServer> | null = null;
   private ctx: RouteContext;
   private port: number;
+  private checkAuth: (req: IncomingMessage) => boolean;
 
-  constructor(options: { port?: number; agentCard?: AgentCard; handler?: A2AServerHandler }) {
+  constructor(options: { port?: number; agentCard?: AgentCard; handler?: A2AServerHandler; auth?: AuthConfig }) {
     this.port = options.port ?? 4120;
+    this.checkAuth = createAuthChecker(options.auth ?? {});
     this.ctx = {
       agentCard: options.agentCard ?? buildDefaultAgentCard(),
       handler: options.handler ?? new DefaultHandler(),
@@ -81,6 +84,12 @@ export class A2AServer {
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
     if (method === 'OPTIONS') { res.writeHead(204).end(); return; }
+
+    const isPublic = method === 'GET' && url.pathname === '/.well-known/agent-card.json';
+    if (!isPublic && !this.checkAuth(req)) {
+      this.json(res, { error: { code: -32000, message: 'Unauthorized' } }, 401);
+      return;
+    }
 
     try {
       if (method === 'GET' && url.pathname === '/.well-known/agent-card.json') {

@@ -234,8 +234,8 @@ export class ConfigManager {
   get(): XiaobaiConfig;
   get<K extends keyof XiaobaiConfig>(key: K): XiaobaiConfig[K];
   get(key?: keyof XiaobaiConfig): XiaobaiConfig | XiaobaiConfig[keyof XiaobaiConfig] {
-    if (key !== undefined) return this.config[key];
-    return this.config;
+    if (key !== undefined) return structuredClone(this.config[key]);
+    return structuredClone(this.config);
   }
 
   save(config: Partial<XiaobaiConfig>): void {
@@ -255,6 +255,6 @@ export class ConfigManager {
   }
 
   static getDefault(): XiaobaiConfig {
-    return { ...DEFAULT_CONFIG };
+    return structuredClone(DEFAULT_CONFIG);
   }
 }

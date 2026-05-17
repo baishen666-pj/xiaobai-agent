@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { ProviderRouter } from '../../src/provider/router.js';
-import { CircuitBreaker } from '../../src/provider/circuit-breaker.js';
 import { RateLimiter } from '../../src/provider/rate-limiter.js';
 import { ProviderMetrics } from '../../src/provider/provider-metrics.js';
 import type { XiaobaiConfig } from '../../src/config/manager.js';
@@ -34,10 +33,9 @@ function makeProvider(response: Partial<ProviderResponse> = {}): LLMProvider {
 
 describe('ProviderRouter with Circuit Breaker', () => {
   it('uses circuit breaker when provided', async () => {
-    const cb = new CircuitBreaker({ failureThreshold: 2, resetTimeoutMs: 1000 });
     const metrics = new ProviderMetrics();
     const config = makeConfig();
-    const router = new ProviderRouter(config, { circuitBreaker: cb, metrics });
+    const router = new ProviderRouter(config, { circuitBreakerConfig: { failureThreshold: 2, resetTimeoutMs: 1000 }, metrics });
 
     const mockProvider = makeProvider();
     router.registerProviderFactory('mock', () => mockProvider);
@@ -45,42 +43,43 @@ describe('ProviderRouter with Circuit Breaker', () => {
     const result = await router.chat([{ role: 'user', content: 'test' }]);
     expect(result).not.toBeNull();
     expect(result!.content).toBe('mock response');
-    expect(cb.getState()).toBe('closed');
     expect(metrics.getEntryCount()).toBe(1);
   });
 
   it('falls back when circuit breaker is open', async () => {
-    const cb = new CircuitBreaker({ failureThreshold: 1, resetTimeoutMs: 10000 });
-    cb.recordFailure();
-    cb.recordFailure();
-
     const config = makeConfig({
+      model: { default: 'test-model' },
       provider: {
         default: 'primary',
         fallbacks: [{ name: 'fallback', apiKey: 'test' }],
       },
     } as Partial<XiaobaiConfig>);
 
-    const router = new ProviderRouter(config, { circuitBreaker: cb });
+    const router = new ProviderRouter(config, { circuitBreakerConfig: { failureThreshold: 1, resetTimeoutMs: 10000 } });
 
     const fallbackProvider = makeProvider({ content: 'fallback response' });
     router.registerProviderFactory('fallback', () => fallbackProvider);
-    router.registerProviderFactory('primary', () => {
-      throw new Error('should not be called');
-    });
 
-    // The primary provider is circuit-broken, should try fallback
-    // Since primary factory throws, we need to register a failing one
     const primaryProvider: LLMProvider = {
       name: 'primary',
-      chat: vi.fn().mockRejectedValue(new Error('unavailable')),
+      chat: vi.fn().mockRejectedValue(new Error('rate limit exceeded')),
     };
     router.registerProviderFactory('primary', () => primaryProvider);
 
-    // Circuit breaker is already open, so it should try fallback
-    const result = await router.chat([{ role: 'user', content: 'test' }]);
-    // The fallback should be attempted
-    expect(fallbackProvider.chat).toHaveBeenCalled();
+    // First call: primary fails with retryable error, retries exhaust (MAX_RETRIES=3),
+    // circuit breaker trips after first failure (failureThreshold: 1),
+    // no fallback model configured, cross-provider fallback succeeds
+    const result1 = await router.chat([{ role: 'user', content: 'test' }]);
+    expect(result1).not.toBeNull();
+    expect(result1!.content).toBe('fallback response');
+
+    // Second call: primary's circuit breaker is open, goes directly to fallback
+    vi.clearAllMocks();
+    const result2 = await router.chat([{ role: 'user', content: 'test' }]);
+    expect(result2).not.toBeNull();
+    expect(result2!.content).toBe('fallback response');
+    // Primary should not have been called on second attempt (circuit breaker is open)
+    expect(primaryProvider.chat).not.toHaveBeenCalled();
   });
 });
 

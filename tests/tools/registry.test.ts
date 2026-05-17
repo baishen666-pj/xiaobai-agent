@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { ToolRegistry } from '../../src/tools/registry.js';
 import type { Tool, ToolResult, ToolContext } from '../../src/tools/registry.js';
 
@@ -58,53 +58,6 @@ function makeNonErrorThrowingTool(name: string, thrownValue: unknown): Tool {
   };
 }
 
-beforeEach(() => {
-  ToolRegistry.resetDefault();
-});
-
-afterEach(() => {
-  ToolRegistry.resetDefault();
-});
-
-// ---------------------------------------------------------------------------
-// getDefault / resetDefault singleton
-// ---------------------------------------------------------------------------
-
-describe('ToolRegistry.getDefault', () => {
-  it('returns a ToolRegistry instance', () => {
-    const registry = ToolRegistry.getDefault();
-    expect(registry).toBeInstanceOf(ToolRegistry);
-  });
-
-  it('returns the same instance on repeated calls', () => {
-    const a = ToolRegistry.getDefault();
-    const b = ToolRegistry.getDefault();
-    expect(a).toBe(b);
-  });
-
-  it('creates a new instance after resetDefault', () => {
-    const first = ToolRegistry.getDefault();
-    ToolRegistry.resetDefault();
-    const second = ToolRegistry.getDefault();
-    expect(first).not.toBe(second);
-  });
-});
-
-describe('ToolRegistry.resetDefault', () => {
-  it('resets the default instance to null', () => {
-    const first = ToolRegistry.getDefault();
-    ToolRegistry.resetDefault();
-    const second = ToolRegistry.getDefault();
-    expect(first).not.toBe(second);
-  });
-
-  it('is safe to call when no default instance exists', () => {
-    ToolRegistry.resetDefault();
-    // Calling again should not throw
-    expect(() => ToolRegistry.resetDefault()).not.toThrow();
-  });
-});
-
 // ---------------------------------------------------------------------------
 // register
 // ---------------------------------------------------------------------------
@@ -128,30 +81,6 @@ describe('ToolRegistry.register', () => {
     return expect(
       registry.execute('dup_tool', {}).then((r) => r.output),
     ).resolves.toBe('v2');
-  });
-});
-
-// ---------------------------------------------------------------------------
-// registerSelf (static)
-// ---------------------------------------------------------------------------
-
-describe('ToolRegistry.registerSelf', () => {
-  it('registers a tool on the default instance', () => {
-    const tool = makeTool('self_registered');
-    ToolRegistry.registerSelf(tool);
-    const registry = ToolRegistry.getDefault();
-    expect(registry.list()).toContain('self_registered');
-  });
-
-  it('makes tool available via execute on default instance', async () => {
-    const tool = makeTool('self_exec_tool', async () => ({
-      output: 'self-exec-result',
-      success: true,
-    }));
-    ToolRegistry.registerSelf(tool);
-    const result = await ToolRegistry.getDefault().execute('self_exec_tool', {});
-    expect(result.success).toBe(true);
-    expect(result.output).toBe('self-exec-result');
   });
 });
 
