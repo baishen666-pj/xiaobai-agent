@@ -38,15 +38,27 @@ export interface Tool {
 export class ToolRegistry {
   private tools = new Map<string, Tool>();
   private mcpTools = new Map<string, Tool>();
+  private definitionsCache: ToolDefinition[] | null = null;
+  private tracer?: import('../telemetry/tracer.js').Tracer;
+
+  setTracer(tracer: import('../telemetry/tracer.js').Tracer): void {
+    this.tracer = tracer;
+  }
+
+  private invalidateCache(): void {
+    this.definitionsCache = null;
+  }
 
   register(tool: Tool): void {
     this.tools.set(tool.definition.name, tool);
+    this.invalidateCache();
   }
 
   registerBatch(tools: Tool[]): void {
     for (const tool of tools) {
-      this.register(tool);
+      this.tools.set(tool.definition.name, tool);
     }
+    this.invalidateCache();
   }
 
   registerMcpTool(serverName: string, tool: Tool): void {
@@ -55,6 +67,7 @@ export class ToolRegistry {
       ...tool,
       definition: { ...tool.definition, name: prefixedName },
     });
+    this.invalidateCache();
   }
 
   async execute(name: string, args: Record<string, unknown>, context?: ToolContext): Promise<ToolResult> {
@@ -62,22 +75,35 @@ export class ToolRegistry {
     if (!tool) {
       return { output: `Unknown tool: ${name}`, success: false, error: 'tool_not_found' };
     }
+
+    const span = this.tracer?.startSpan(`tool.${name}`, {
+      attributes: { tool: name },
+    });
+
     try {
-      return await tool.execute(args, context);
+      const result = await tool.execute(args, context);
+      span?.setAttribute('success', result.success);
+      span?.setStatus(result.success ? 'ok' : 'error');
+      return result;
     } catch (error) {
+      span?.setStatus('error');
       return {
         output: `Tool execution failed: ${error instanceof Error ? error.message : String(error)}`,
         success: false,
         error: 'execution_error',
       };
+    } finally {
+      span?.end();
     }
   }
 
   getToolDefinitions(): ToolDefinition[] {
-    return [
+    if (this.definitionsCache) return this.definitionsCache;
+    this.definitionsCache = [
       ...Array.from(this.tools.values()),
       ...Array.from(this.mcpTools.values()),
     ].map((t) => t.definition);
+    return this.definitionsCache;
   }
 
   has(name: string): boolean {
@@ -89,6 +115,8 @@ export class ToolRegistry {
   }
 
   unregister(name: string): boolean {
-    return this.tools.delete(name) || this.mcpTools.delete(name);
+    const removed = this.tools.delete(name) || this.mcpTools.delete(name);
+    if (removed) this.invalidateCache();
+    return removed;
   }
 }

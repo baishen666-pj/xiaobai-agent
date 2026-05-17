@@ -70,12 +70,15 @@ export class RuntimeMetrics {
 
   recordHistogram(name: string, value: number, tags?: Record<string, string>): void {
     const key = this.metricKey(name, tags);
-    const existing = this.histograms.get(key) ?? [];
-    const updated = [...existing, value];
-    this.histograms.set(key, updated.length > this.maxSamplesPerMetric
-      ? updated.slice(-this.maxSamplesPerMetric)
-      : updated,
-    );
+    let arr = this.histograms.get(key);
+    if (!arr) {
+      arr = [];
+      this.histograms.set(key, arr);
+    }
+    arr.push(value);
+    if (arr.length > this.maxSamplesPerMetric) {
+      this.histograms.set(key, arr.slice(-this.maxSamplesPerMetric));
+    }
     this.recordSample(name, value, 'ms', tags);
   }
 

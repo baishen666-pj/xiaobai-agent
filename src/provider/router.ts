@@ -8,6 +8,29 @@ import { GoogleProvider } from './google.js';
 import { CircuitBreaker, type CircuitBreakerConfig } from './circuit-breaker.js';
 import { RateLimiter } from './rate-limiter.js';
 import { ProviderMetrics } from './provider-metrics.js';
+import type { Tracer } from '../telemetry/tracer.js';
+
+const ENV_KEY_MAP: Record<string, string[]> = {
+  anthropic: ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'],
+  openai: ['OPENAI_API_KEY'],
+  google: ['GOOGLE_API_KEY', 'GEMINI_API_KEY'],
+  groq: ['GROQ_API_KEY'],
+  ollama: [],
+  deepseek: ['DEEPSEEK_API_KEY'],
+  zhipu: ['ZHIPU_API_KEY'],
+  qwen: ['QWEN_API_KEY', 'DASHSCOPE_API_KEY'],
+  moonshot: ['MOONSHOT_API_KEY'],
+  yi: ['YI_API_KEY'],
+  baidu: ['BAIDU_API_KEY'],
+  minimax: ['MINIMAX_API_KEY'],
+  baichuan: ['BAICHUAN_API_KEY'],
+  'claude-web': ['CLAUDE_WEB_TOKEN', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY'],
+  'chatgpt-web': ['CHATGPT_WEB_TOKEN', 'OPENAI_SESSION_TOKEN', 'OPENAI_API_KEY'],
+  cohere: ['COHERE_API_KEY'],
+  mistral: ['MISTRAL_API_KEY'],
+  xai: ['XAI_API_KEY'],
+  perplexity: ['PERPLEXITY_API_KEY'],
+};
 
 export type { ProviderResponse, StreamChunk, ChatOptions, ProviderConfig, LLMProvider } from './types.js';
 
@@ -50,6 +73,7 @@ export interface RouterOptions {
   circuitBreakerConfig?: Partial<CircuitBreakerConfig>;
   rateLimiter?: RateLimiter;
   metrics?: ProviderMetrics;
+  tracer?: Tracer;
 }
 
 export class ProviderRouter {
@@ -60,12 +84,14 @@ export class ProviderRouter {
   private circuitBreakers = new Map<string, CircuitBreaker>();
   private rateLimiter?: RateLimiter;
   private metrics?: ProviderMetrics;
+  private tracer?: Tracer;
 
   constructor(config: XiaobaiConfig, options?: RouterOptions) {
     this.config = config;
     this.circuitBreakerConfig = options?.circuitBreakerConfig;
     this.rateLimiter = options?.rateLimiter;
     this.metrics = options?.metrics;
+    this.tracer = options?.tracer;
   }
 
   private getBreaker(name: string): CircuitBreaker | undefined {
@@ -124,28 +150,57 @@ export class ProviderRouter {
     const providerName = this.selectProvider();
     const model = this.config.model.default;
 
-    // Rate limiting
-    if (this.rateLimiter && !this.rateLimiter.acquire(providerName)) {
-      const waited = await this.rateLimiter.acquireOrWait(providerName, 1, 5000);
-      if (!waited) throw new Error(`Rate limit exceeded for ${providerName}`);
-    }
+    const span = this.tracer?.startSpan('provider.chat', {
+      kind: 'client',
+      attributes: { provider: providerName, model },
+    });
 
-    return this.withRetry(providerName, model, messages, options);
+    try {
+      // Rate limiting
+      if (this.rateLimiter && !this.rateLimiter.acquire(providerName)) {
+        const waited = await this.rateLimiter.acquireOrWait(providerName, 1, 5000);
+        if (!waited) throw new Error(`Rate limit exceeded for ${providerName}`);
+      }
+
+      const result = await this.withRetry(providerName, model, messages, options);
+      span?.setAttribute('tokens', result?.usage?.totalTokens ?? 0);
+      span?.setStatus('ok');
+      return result;
+    } catch (error) {
+      span?.setStatus('error');
+      throw error;
+    } finally {
+      span?.end();
+    }
   }
 
   async *chatStream(messages: Message[], options: ChatOptions = {}): AsyncGenerator<StreamChunk, void, void> {
     const providerName = this.config.provider.default;
     const model = this.config.model.default;
-    const provider = this.getProvider(providerName);
 
-    if (provider.chatStream) {
-      yield* provider.chatStream(messages, model, options);
-    } else {
-      const response = await provider.chat(messages, model, options);
-      if (response.content) {
-        yield { type: 'text_delta', text: response.content };
+    const span = this.tracer?.startSpan('provider.chatStream', {
+      kind: 'client',
+      attributes: { provider: providerName, model },
+    });
+
+    try {
+      const provider = this.getProvider(providerName);
+
+      if (provider.chatStream) {
+        yield* provider.chatStream(messages, model, options);
+      } else {
+        const response = await provider.chat(messages, model, options);
+        if (response.content) {
+          yield { type: 'text_delta', text: response.content };
+        }
+        yield { type: 'done', stopReason: response.stopReason };
       }
-      yield { type: 'done', stopReason: response.stopReason };
+      span?.setStatus('ok');
+    } catch (error) {
+      span?.setStatus('error');
+      throw error;
+    } finally {
+      span?.end();
     }
   }
 
@@ -165,11 +220,27 @@ export class ProviderRouter {
 
   async embed(text: string, model?: string): Promise<EmbeddingResponse> {
     const providerName = this.config.provider.default;
-    const provider = this.getProvider(providerName);
-    if (!provider.embed) {
-      throw new Error(`Provider '${providerName}' does not support embeddings`);
+    const embedModel = model ?? 'text-embedding-3-small';
+
+    const span = this.tracer?.startSpan('provider.embed', {
+      kind: 'client',
+      attributes: { provider: providerName, model: embedModel },
+    });
+
+    try {
+      const provider = this.getProvider(providerName);
+      if (!provider.embed) {
+        throw new Error(`Provider '${providerName}' does not support embeddings`);
+      }
+      const result = await provider.embed(text, embedModel);
+      span?.setStatus('ok');
+      return result;
+    } catch (error) {
+      span?.setStatus('error');
+      throw error;
+    } finally {
+      span?.end();
     }
-    return provider.embed(text, model ?? 'text-embedding-3-small');
   }
 
   private async withRetry(
@@ -283,28 +354,7 @@ export class ProviderRouter {
   }
 
   private getEnvKey(provider: string): string | undefined {
-    const envMap: Record<string, string[]> = {
-      anthropic: ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'],
-      openai: ['OPENAI_API_KEY'],
-      google: ['GOOGLE_API_KEY', 'GEMINI_API_KEY'],
-      groq: ['GROQ_API_KEY'],
-      ollama: [],
-      deepseek: ['DEEPSEEK_API_KEY'],
-      zhipu: ['ZHIPU_API_KEY'],
-      qwen: ['QWEN_API_KEY', 'DASHSCOPE_API_KEY'],
-      moonshot: ['MOONSHOT_API_KEY'],
-      yi: ['YI_API_KEY'],
-      baidu: ['BAIDU_API_KEY'],
-      minimax: ['MINIMAX_API_KEY'],
-      baichuan: ['BAICHUAN_API_KEY'],
-      'claude-web': ['CLAUDE_WEB_TOKEN', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY'],
-      'chatgpt-web': ['CHATGPT_WEB_TOKEN', 'OPENAI_SESSION_TOKEN', 'OPENAI_API_KEY'],
-      cohere: ['COHERE_API_KEY'],
-      mistral: ['MISTRAL_API_KEY'],
-      xai: ['XAI_API_KEY'],
-      perplexity: ['PERPLEXITY_API_KEY'],
-    };
-    const keys = envMap[provider] ?? [];
+    const keys = ENV_KEY_MAP[provider] ?? [];
     for (const key of keys) {
       if (process.env[key]) return process.env[key];
     }

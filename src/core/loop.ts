@@ -10,6 +10,7 @@ import type { Submission, AgentEvent, StopReason, TurnContext, SandboxPolicy } f
 import type { TokenTracker } from './token-tracker.js';
 import { CompactionEngine } from './compaction.js';
 import { loadHierarchicalContext, buildContextSystemPrompt } from './context.js';
+import type { Tracer } from '../telemetry/tracer.js';
 
 export type { StopReason } from './submissions.js';
 
@@ -51,6 +52,7 @@ export class AgentLoop {
   private security: SecurityManager;
   private compaction: CompactionEngine;
   private skills?: SkillSystem;
+  private tracer?: Tracer;
 
   private submissionQueue: Submission[] = [];
   private eventBuffer: AgentEvent[] = [];
@@ -65,6 +67,7 @@ export class AgentLoop {
     memory: MemorySystem;
     security: SecurityManager;
     skills?: SkillSystem;
+    tracer?: Tracer;
   }) {
     this.provider = deps.provider;
     this.tools = deps.tools;
@@ -74,6 +77,7 @@ export class AgentLoop {
     this.memory = deps.memory;
     this.security = deps.security;
     this.skills = deps.skills;
+    this.tracer = deps.tracer;
     this.compaction = new CompactionEngine(deps.provider);
   }
 
@@ -146,12 +150,25 @@ export class AgentLoop {
         await this.hooks.emit('pre_turn', { state, sessionId });
         state.turn++;
 
+        const turnSpan = this.tracer?.startSpan('agent.turn', {
+          attributes: { turn: state.turn, provider: currentProvider, model: currentModel },
+        });
+
         const systemPrompt = await this.buildSystemPrompt(sessionId, options.systemPromptOverride);
 
-        if (useStream) {
-          yield* this.processStreamTurn(state, systemPrompt, options, currentProvider, currentModel);
-        } else {
-          yield* this.processTurn(state, systemPrompt, options, currentProvider, currentModel);
+        try {
+          if (useStream) {
+            yield* this.processStreamTurn(state, systemPrompt, options, currentProvider, currentModel);
+          } else {
+            yield* this.processTurn(state, systemPrompt, options, currentProvider, currentModel);
+          }
+          turnSpan?.setAttribute('tokens', state.totalTokens);
+          turnSpan?.setStatus('ok');
+        } catch (error) {
+          turnSpan?.setStatus('error');
+          throw error;
+        } finally {
+          turnSpan?.end();
         }
 
         if (state.stopReason) break;
@@ -337,10 +354,11 @@ export class AgentLoop {
     currentProvider: string,
     currentModel: string,
   ): AsyncGenerator<LoopEvent, void, void> {
-    let fullContent = '';
+    const contentParts: string[] = [];
     let totalTokens = 0;
     let lastUsage: { promptTokens: number; completionTokens: number; totalTokens: number } | undefined;
     const toolCallStates = new Map<number, { id: string; name: string; args: string }>();
+    const toolCallById = new Map<string, { id: string; name: string; args: string }>();
 
     try {
       for await (const chunk of this.provider.chatStream(state.messages, {
@@ -350,24 +368,22 @@ export class AgentLoop {
       })) {
         switch (chunk.type) {
           case 'text_delta':
-            fullContent += chunk.text ?? '';
+            contentParts.push(chunk.text ?? '');
             yield { type: 'stream', content: chunk.text ?? '' };
             break;
           case 'tool_call_start':
             if (chunk.toolCallId && chunk.toolCallName) {
               const idx = toolCallStates.size;
-              toolCallStates.set(idx, { id: chunk.toolCallId, name: chunk.toolCallName, args: '' });
+              const tc = { id: chunk.toolCallId, name: chunk.toolCallName, args: '' };
+              toolCallStates.set(idx, tc);
+              toolCallById.set(chunk.toolCallId, tc);
             }
             yield { type: 'tool_call', content: '', toolName: chunk.toolCallName, toolArgs: {} };
             break;
           case 'tool_call_delta':
-            if (chunk.toolCallDelta) {
-              for (const [, tc] of toolCallStates) {
-                if (tc.id === chunk.toolCallId) {
-                  tc.args += chunk.toolCallDelta;
-                  break;
-                }
-              }
+            if (chunk.toolCallDelta && chunk.toolCallId) {
+              const tc = toolCallById.get(chunk.toolCallId);
+              if (tc) tc.args += chunk.toolCallDelta;
             }
             break;
           case 'usage':
@@ -380,6 +396,7 @@ export class AgentLoop {
             this.recordTokenUsage(state, options, currentProvider, currentModel, totalTokens, lastUsage);
 
             const toolCalls = this.parseToolCallStates(toolCallStates);
+            const fullContent = contentParts.join('');
 
             if (toolCalls.length > 0 || chunk.stopReason === 'tool_calls' || chunk.stopReason === 'tool_use') {
               yield* this.handleToolCallTurn(state, fullContent, toolCalls, options);
@@ -424,7 +441,22 @@ export class AgentLoop {
         };
       }
 
-      const result = await this.tools.execute(call.name, args);
+      const toolSpan = this.tracer?.startSpan(`tool.${call.name}`, {
+        attributes: { tool: call.name },
+      });
+
+      let result: ToolResult;
+      try {
+        result = await this.tools.execute(call.name, args);
+        toolSpan?.setAttribute('success', result.success);
+        toolSpan?.setStatus(result.success ? 'ok' : 'error');
+      } catch (error) {
+        toolSpan?.setStatus('error');
+        throw error;
+      } finally {
+        toolSpan?.end();
+      }
+
       await this.hooks.emit('post_tool_use', { tool: call.name, args, result });
       return { call, result };
     };

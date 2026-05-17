@@ -74,13 +74,13 @@ export class XiaobaiAgent {
 
   async chatSync(message: string, sessionId?: string): Promise<string> {
     const sid = sessionId ?? this.deps.sessions.createSession();
-    let response = '';
+    const parts: string[] = [];
     for await (const event of this.loop.run(message, sid)) {
       if (event.type === 'text') {
-        response += event.content;
+        parts.push(event.content);
       }
     }
-    return response;
+    return parts.join('');
   }
 
   getTools(): ToolRegistry {
@@ -160,28 +160,28 @@ export class XiaobaiAgent {
     const mcp = new MCPSession(config.getConfigDir());
 
     // Auto-discover and register MCP tools (non-fatal)
-    try {
-      const mcpTools = await mcp.discoverTools();
-      for (const [serverName, toolDefs] of mcpTools) {
-        const mcpToolInstances = createMCPTools(serverName, toolDefs, mcp);
-        for (const tool of mcpToolInstances) {
-          tools.registerMcpTool(serverName, tool);
+    const mcpPromise = (async () => {
+      try {
+        const mcpTools = await mcp.discoverTools();
+        for (const [serverName, toolDefs] of mcpTools) {
+          const mcpToolInstances = createMCPTools(serverName, toolDefs, mcp);
+          for (const tool of mcpToolInstances) {
+            tools.registerMcpTool(serverName, tool);
+          }
         }
+      } catch (e) {
+        console.debug('agent: MCP discovery failure (non-fatal)', (e as Error).message);
       }
-    } catch (e) {
-      console.debug('agent: MCP discovery failure (non-fatal)', (e as Error).message);
-    }
+    })();
 
     const skills = new SkillSystem(config.getConfigDir());
-    if (cfg.skills.enabled) {
-      await skills.loadAll();
-    }
+    const skillsPromise = cfg.skills.enabled ? skills.loadAll() : Promise.resolve();
 
-    let plugins: PluginManager | undefined;
-    if (cfg.plugins?.enabled) {
+    const pluginsPromise = (async (): Promise<PluginManager | undefined> => {
+      if (!cfg.plugins?.enabled) return undefined;
       const { PluginManager } = await import('../plugins/manager.js');
       const pluginsDir = join(config.getConfigDir(), 'plugins');
-      plugins = new PluginManager({
+      const pm = new PluginManager({
         tools,
         hooks,
         config,
@@ -189,9 +189,12 @@ export class XiaobaiAgent {
         providers: provider,
         pluginsDir,
       });
-      await plugins.init();
-      await plugins.activateAll();
-    }
+      await pm.init();
+      await pm.activateAll();
+      return pm;
+    })();
+
+    const [, , plugins] = await Promise.all([mcpPromise, skillsPromise, pluginsPromise]);
 
     return new XiaobaiAgent({
       config,

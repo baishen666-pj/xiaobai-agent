@@ -57,6 +57,7 @@ export class Orchestrator {
   private deps: AgentDeps;
   private workspace: Workspace;
   private tasks: Task[] = [];
+  private taskIndex = new Map<string, Task>();
   private agents = new Map<string, AgentHandle>();
   private completedIds = new Set<string>();
   private results: TaskResult[] = [];
@@ -108,6 +109,7 @@ export class Orchestrator {
       parentTaskId: params.parentTaskId,
     });
     this.tasks.push(task);
+    this.taskIndex.set(task.id, task);
     return task;
   }
 
@@ -116,7 +118,7 @@ export class Orchestrator {
   }
 
   getTask(id: string): Task | undefined {
-    return this.tasks.find((t) => t.id === id);
+    return this.taskIndex.get(id);
   }
 
   getResults(): TaskResult[] {
@@ -125,6 +127,7 @@ export class Orchestrator {
 
   async planAndExecute(goal: string, options: OrchestratorOptions = {}): Promise<TaskResult[]> {
     this.tasks = [];
+    this.taskIndex.clear();
     this.results = [];
     this.completedIds.clear();
 
@@ -184,13 +187,17 @@ export class Orchestrator {
         break;
       }
 
-      const pendingCount = this.tasks.filter(isPending).length;
-      const runningCount = this.tasks.filter(isRunning).length;
+      const pendingTasks: Task[] = [];
+      let runningCount = 0;
+      for (const t of this.tasks) {
+        if (isPending(t)) pendingTasks.push(t);
+        else if (isRunning(t)) runningCount++;
+      }
 
-      if (pendingCount === 0 && runningCount === 0) break;
+      if (pendingTasks.length === 0 && runningCount === 0) break;
 
       const readyTasks = sortTasksByPriority(
-        this.tasks.filter((t) => isPending(t) && isTaskReady(t, this.completedIds)),
+        pendingTasks.filter((t) => isTaskReady(t, this.completedIds)),
       );
 
       let launched = 0;
