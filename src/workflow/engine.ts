@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { AgentDeps } from '../core/agent.js';
-import type { Orchestrator } from '../core/orchestrator.js';
+import { AgentLoop } from '../core/loop.js';
 import { createTask } from '../core/task.js';
 import { getRole } from '../core/roles.js';
 import { renderTemplate, evaluateCondition } from './template.js';
@@ -197,13 +197,28 @@ export class WorkflowEngine {
 
       const start = Date.now();
       try {
-        const output = await this.runAgent(step, prompt, signal);
+        let output: string;
+        let structuredOutput: Record<string, unknown> | undefined;
+
+        if (step.tools && step.tools.length > 0) {
+          output = await this.runWithTools(step, prompt, signal);
+        } else if (step.subAgent) {
+          output = await this.runSubAgent(step, prompt);
+        } else if (step.outputSchema) {
+          const result = await this.runStructured(step, prompt);
+          output = JSON.stringify(result);
+          structuredOutput = result;
+        } else {
+          output = await this.runAgent(step, prompt, signal);
+        }
+
         const result: StepResult = {
           stepId: step.id,
           status: 'completed',
           output,
           tokensUsed: 0,
           durationMs: Date.now() - start,
+          ...(structuredOutput ? { structuredOutput } : {}),
         };
         emit({ type: 'step_completed', runId: run.id, stepId: step.id, result });
         return result;
@@ -272,10 +287,99 @@ export class WorkflowEngine {
     return typeof result === 'string' ? result : (result as any)?.content ?? String(result);
   }
 
+  private async runWithTools(
+    step: import('./types.js').WorkflowStep,
+    prompt: string,
+    signal: AbortSignal,
+  ): Promise<string> {
+    const { ToolRegistry } = await import('../tools/registry.js');
+    const filteredRegistry = new ToolRegistry();
+    const allowed = new Set(step.tools);
+
+    for (const def of this.deps.tools.getToolDefinitions()) {
+      if (allowed.has(def.name)) {
+        filteredRegistry.register({
+          definition: def,
+          execute: (args, ctx) => this.deps.tools.execute(def.name, args, ctx),
+        });
+      }
+    }
+
+    const loop = new AgentLoop({
+      provider: this.deps.provider,
+      tools: filteredRegistry,
+      sessions: this.deps.sessions,
+      hooks: this.deps.hooks,
+      config: this.deps.config,
+      memory: this.deps.memory,
+      security: this.deps.security,
+    });
+
+    const sessionId = `wf_step_${step.id}_${Date.now()}`;
+    const maxTurns = step.maxTurns ?? 10;
+    let output = '';
+
+    for await (const event of loop.run(prompt, sessionId, { maxTurns, abortSignal: signal })) {
+      if (event.type === 'text' || event.type === 'stream') {
+        output += event.content;
+      }
+    }
+
+    return output;
+  }
+
+  private async runSubAgent(
+    step: import('./types.js').WorkflowStep,
+    prompt: string,
+  ): Promise<string> {
+    const { SubAgentEngine } = await import('../core/sub-agent.js');
+    const subEngine = new SubAgentEngine({
+      provider: this.deps.provider,
+      sessions: this.deps.sessions,
+      hooks: this.deps.hooks,
+      config: this.deps.config,
+      memory: this.deps.memory,
+      security: this.deps.security,
+    });
+
+    const options = step.subAgent!;
+    const result = await subEngine.spawn(prompt, this.deps.tools, {
+      definitionName: options.definitionName,
+    });
+
+    if (!result.success) {
+      throw new Error(`Sub-agent failed: ${result.error}`);
+    }
+    return result.output;
+  }
+
+  private async runStructured(
+    step: import('./types.js').WorkflowStep,
+    prompt: string,
+  ): Promise<Record<string, unknown>> {
+    const { structuredChat } = await import('../structured/index.js');
+    const { z } = await import('zod');
+
+    const result = await structuredChat(
+      (messages, opts) => this.deps.provider.chat(messages, opts),
+      [
+        { role: 'system' as const, content: 'Respond with valid JSON matching the requested schema.' },
+        { role: 'user' as const, content: prompt },
+      ],
+      { schema: z.record(z.unknown()), maxRetries: 2 },
+    );
+
+    return result.data as Record<string, unknown>;
+  }
+
   private buildContext(run: WorkflowRun, variables: Record<string, string>): Record<string, unknown> {
     const stepOutputs: Record<string, unknown> = {};
     for (const [id, result] of run.stepResults) {
-      stepOutputs[id] = { output: result.output, status: result.status };
+      stepOutputs[id] = {
+        output: result.output,
+        status: result.status,
+        ...(result.structuredOutput ? { structuredOutput: result.structuredOutput } : {}),
+      };
     }
     return { variables, steps: stepOutputs, workflowName: run.workflowName, runId: run.id };
   }

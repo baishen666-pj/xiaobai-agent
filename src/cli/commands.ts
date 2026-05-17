@@ -667,3 +667,95 @@ export function registerWorkflowCommand(program: Command): Command {
 
   return program;
 }
+
+export function registerRemoteAgentsCommand(program: Command): Command {
+  program
+    .command('remote-agents')
+    .description('Manage remote agents (A2A/ACP)')
+    .addCommand(
+      new Command('list')
+        .description('List registered remote agents')
+        .action(async () => {
+          const { RemoteAgentBridge } = await import('../protocols/orchestrator-bridge.js');
+          const bridge = new RemoteAgentBridge();
+          const agents = bridge.listAgents();
+          if (agents.length === 0) {
+            console.log(chalk.gray('No remote agents registered.'));
+            return;
+          }
+          console.log(chalk.cyan.bold(`\n  Remote Agents (${agents.length})\n`));
+          for (const a of agents) {
+            console.log(`  ${chalk.yellow(a.name.padEnd(20))} ${chalk.gray(a.protocol.padEnd(6))} ${a.url} ${a.role ? chalk.gray(`(${a.role})`) : ''}`);
+          }
+          console.log();
+        }),
+    )
+    .addCommand(
+      new Command('register <name>')
+        .description('Register a remote agent')
+        .requiredOption('--url <url>', 'Agent URL')
+        .requiredOption('--protocol <protocol>', 'Protocol (a2a or acp)')
+        .option('--role <role>', 'Agent role mapping')
+        .action(async (name: string, options: { url: string; protocol: string; role?: string }) => {
+          const { RemoteAgentBridge } = await import('../protocols/orchestrator-bridge.js');
+          const bridge = new RemoteAgentBridge();
+          if (options.protocol !== 'a2a' && options.protocol !== 'acp') {
+            console.log(chalk.red('Protocol must be "a2a" or "acp"'));
+            process.exit(1);
+          }
+          await bridge.registerAgent({
+            name,
+            url: options.url,
+            protocol: options.protocol,
+            role: options.role,
+          });
+          console.log(chalk.green(`  Registered remote agent: ${name}`));
+        }),
+    )
+    .addCommand(
+      new Command('unregister <name>')
+        .description('Unregister a remote agent')
+        .action(async (name: string) => {
+          const { RemoteAgentBridge } = await import('../protocols/orchestrator-bridge.js');
+          const bridge = new RemoteAgentBridge();
+          bridge.unregisterAgent(name);
+          console.log(chalk.green(`  Unregistered remote agent: ${name}`));
+        }),
+    )
+    .addCommand(
+      new Command('execute <name> <prompt>')
+        .description('Execute a task on a remote agent')
+        .action(async (name: string, prompt: string) => {
+          const { RemoteAgentBridge } = await import('../protocols/orchestrator-bridge.js');
+          const bridge = new RemoteAgentBridge();
+          const result = await bridge.executeRemoteTask(name, prompt);
+          if (result.success) {
+            console.log(result.output);
+          } else {
+            console.log(chalk.red(`  Error: ${result.error}`));
+            process.exit(1);
+          }
+        }),
+    )
+    .addCommand(
+      new Command('marketplace [query]')
+        .description('Browse the agent marketplace')
+        .action(async (query?: string) => {
+          const { AgentMarketplace } = await import('../protocols/agent-marketplace.js');
+          const marketplace = new AgentMarketplace();
+          const entries = query ? marketplace.search(query) : marketplace.listAll();
+          if (entries.length === 0) {
+            console.log(chalk.gray('No agents found in marketplace.'));
+            return;
+          }
+          console.log(chalk.cyan.bold(`\n  Agent Marketplace (${entries.length})\n`));
+          for (const e of entries) {
+            const verified = e.verified ? chalk.green('✓') : ' ';
+            console.log(`  ${verified} ${chalk.yellow(e.name.padEnd(20))} ${e.protocol.padEnd(6)} ${chalk.gray(e.description)}`);
+          }
+          console.log();
+        }),
+    );
+
+  return program;
+}

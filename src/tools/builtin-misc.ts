@@ -9,6 +9,7 @@ export interface ToolContextExtended extends ToolContext {
   hooks?: import('../hooks/system.js').HookSystem;
   skills?: import('../skills/system.js').SkillSystem;
   tools?: ToolRegistry;
+  knowledge?: import('../memory/knowledge-base.js').KnowledgeBase;
   onSubAgentEvent?: (event: LoopEvent) => void;
 }
 

@@ -6,6 +6,7 @@ import type { ConfigManager } from '../config/manager.js';
 import type { MemorySystem } from '../memory/system.js';
 import type { SecurityManager } from '../security/manager.js';
 import type { SkillSystem } from '../skills/system.js';
+import type { KnowledgeBase } from '../memory/knowledge-base.js';
 import type { Submission, AgentEvent, StopReason, TurnContext, SandboxPolicy } from './submissions.js';
 import type { TokenTracker } from './token-tracker.js';
 import { CompactionEngine } from './compaction.js';
@@ -52,6 +53,7 @@ export class AgentLoop {
   private security: SecurityManager;
   private compaction: CompactionEngine;
   private skills?: SkillSystem;
+  private knowledge?: KnowledgeBase;
   private tracer?: Tracer;
 
   private submissionQueue: Submission[] = [];
@@ -67,6 +69,7 @@ export class AgentLoop {
     memory: MemorySystem;
     security: SecurityManager;
     skills?: SkillSystem;
+    knowledge?: KnowledgeBase;
     tracer?: Tracer;
   }) {
     this.provider = deps.provider;
@@ -77,6 +80,7 @@ export class AgentLoop {
     this.memory = deps.memory;
     this.security = deps.security;
     this.skills = deps.skills;
+    this.knowledge = deps.knowledge;
     this.tracer = deps.tracer;
     this.compaction = new CompactionEngine(deps.provider);
   }
@@ -489,6 +493,10 @@ export class AgentLoop {
 
     const contextBlock = this.loadProjectContext();
     if (contextBlock) parts.push(contextBlock);
+
+    if (this.knowledge?.isLoaded()) {
+      parts.push('## Knowledge Base\nYou have access to an indexed knowledge base. Use the `knowledge_search` tool to query it for relevant documentation and information. Use `knowledge_index` to add new documents to the knowledge base.');
+    }
 
     return parts.join('\n\n');
   }

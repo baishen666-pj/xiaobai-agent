@@ -9,6 +9,7 @@ import { SecurityManager } from '../security/manager.js';
 import { MCPSession, createMCPTools } from '../mcp/session.js';
 import { SandboxManager } from '../sandbox/manager.js';
 import { SkillSystem } from '../skills/system.js';
+import { KnowledgeBase } from '../memory/knowledge-base.js';
 import type { PluginManager } from '../plugins/manager.js';
 import { join } from 'node:path';
 import { FileWatcher, type FileWatcherOptions } from '../tools/file-watcher.js';
@@ -31,8 +32,10 @@ export class XiaobaiAgent {
   private loop: AgentLoop;
   private deps: AgentDeps;
   private watcher?: FileWatcher;
+  private knowledge?: KnowledgeBase;
 
-  constructor(deps: AgentDeps) {
+  constructor(deps: AgentDeps, knowledge?: KnowledgeBase) {
+    this.knowledge = knowledge;
     this.deps = deps;
     this.loop = new AgentLoop({
       provider: deps.provider,
@@ -43,6 +46,7 @@ export class XiaobaiAgent {
       memory: deps.memory,
       security: deps.security,
       skills: deps.skills,
+      knowledge,
     });
   }
 
@@ -107,6 +111,10 @@ export class XiaobaiAgent {
     return this.deps.plugins;
   }
 
+  getKnowledge(): KnowledgeBase | undefined {
+    return this.knowledge;
+  }
+
   getDeps(): AgentDeps {
     return this.deps;
   }
@@ -155,7 +163,13 @@ export class XiaobaiAgent {
     const tools = new ToolRegistry();
 
     const builtInTools = await import('../tools/builtin.js');
-    tools.registerBatch(builtInTools.getBuiltinTools({ security, config, memory, sandbox, tools }));
+
+    // Initialize knowledge base (non-fatal)
+    const kb = new KnowledgeBase(provider, {
+      knowledgeDir: join(config.getConfigDir(), 'knowledge'),
+    });
+
+    tools.registerBatch(builtInTools.getBuiltinTools({ security, config, memory, sandbox, tools, knowledge: kb }));
 
     const mcp = new MCPSession(config.getConfigDir());
 
@@ -194,7 +208,15 @@ export class XiaobaiAgent {
       return pm;
     })();
 
-    const [, , plugins] = await Promise.all([mcpPromise, skillsPromise, pluginsPromise]);
+    const kbPromise = (async () => {
+      try {
+        await kb.loadAll();
+      } catch (e) {
+        console.debug('agent: Knowledge base load failure (non-fatal)', (e as Error).message);
+      }
+    })();
+
+    const [, , plugins] = await Promise.all([mcpPromise, skillsPromise, pluginsPromise, kbPromise]);
 
     return new XiaobaiAgent({
       config,
@@ -208,6 +230,6 @@ export class XiaobaiAgent {
       sandbox,
       skills,
       plugins,
-    });
+    }, kb);
   }
 }

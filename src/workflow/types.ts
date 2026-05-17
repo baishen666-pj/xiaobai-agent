@@ -15,6 +15,14 @@ export const WorkflowStepSchema = z.object({
   timeout: z.number().default(300000),
   fallbackPrompt: z.string().optional(),
   outputKey: z.string().optional(),
+  tools: z.array(z.string()).optional(),
+  maxTurns: z.number().optional(),
+  subAgent: z.object({
+    definitionName: z.string().optional(),
+    maxTurns: z.number().optional(),
+    allowedTools: z.array(z.string()).optional(),
+  }).optional(),
+  outputSchema: z.record(z.unknown()).optional(),
 });
 
 export const WorkflowTriggerSchema = z.discriminatedUnion('type', [
@@ -57,6 +65,7 @@ export interface StepResult {
   tokensUsed: number;
   durationMs: number;
   error?: string;
+  structuredOutput?: Record<string, unknown>;
 }
 
 export interface WorkflowRun {

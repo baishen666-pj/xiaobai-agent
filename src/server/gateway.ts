@@ -6,9 +6,12 @@ import { registerChatRoutes } from './api/chat.js';
 import { registerSessionRoutes } from './api/sessions.js';
 import { registerResourceRoutes } from './api/resources.js';
 import { registerWorkflowRoutes } from './api/workflows.js';
+import { registerAgentRoutes } from './api/agents.js';
 import { generateOpenApiSpec, type OpenAPIDocument } from './openapi.js';
 import type { WorkflowRegistry } from '../workflow/registry.js';
 import type { WorkflowEngine } from '../workflow/engine.js';
+import type { RemoteAgentBridge } from '../protocols/orchestrator-bridge.js';
+import type { AgentMarketplace } from '../protocols/agent-marketplace.js';
 import { sendJson } from './validation.js';
 import type { RouteContext } from './router.js';
 
@@ -67,6 +70,10 @@ export class ApiGateway {
       const spec = this.getOpenApiSpec();
       sendJson(ctx, 200, spec);
     }, { summary: 'OpenAPI specification', tags: ['meta'] });
+  }
+
+  registerAgentRoutes(bridge: RemoteAgentBridge, marketplace: AgentMarketplace): void {
+    registerAgentRoutes(this.router, bridge, marketplace);
   }
 
   getOpenApiSpec(): OpenAPIDocument {

@@ -12,6 +12,7 @@ import { imageTool } from './builtin-image.js';
 import { definitionTool } from './builtin-definition.js';
 import { referencesTool } from './builtin-references.js';
 import { typeInfoTool } from './builtin-typeinfo.js';
+import { knowledgeSearchTool, knowledgeIndexTool, knowledgeStatusTool } from './builtin-knowledge.js';
 import type { Tool } from './registry.js';
 
 // NOTE: Tools are now split across domain-specific files:
@@ -26,6 +27,7 @@ export { bashTool } from './builtin-shell.js';
 export { readTool, writeTool, editTool } from './builtin-file.js';
 export { grepTool, globTool, rgAvailable, _resetRgCache } from './builtin-search.js';
 export { memoryTool, createAgentTool, type ToolContextExtended } from './builtin-misc.js';
+export { knowledgeSearchTool, knowledgeIndexTool, knowledgeStatusTool } from './builtin-knowledge.js';
 
 export function getBuiltinTools(context?: ToolContextExtended): Tool[] {
   return [
@@ -54,5 +56,9 @@ export function getBuiltinTools(context?: ToolContextExtended): Tool[] {
     definitionTool,
     referencesTool,
     typeInfoTool,
+    // Phase 19: Knowledge tools
+    knowledgeSearchTool(context?.knowledge),
+    knowledgeIndexTool(context?.knowledge),
+    knowledgeStatusTool(context?.knowledge),
   ];
 }

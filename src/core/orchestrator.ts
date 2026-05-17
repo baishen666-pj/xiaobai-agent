@@ -14,6 +14,7 @@ import { ToolRegistry } from '../tools/registry.js';
 import type { AgentEvent, SessionSource } from './submissions.js';
 import { generateTaskPlan, type TaskPlan } from './planner.js';
 import { analyzeFailure, type ReflectionOutcome } from './reflection.js';
+import type { RemoteAgentBridge } from '../protocols/orchestrator-bridge.js';
 import type { Message } from '../session/manager.js';
 import type { ChatOptions } from '../provider/types.js';
 import { join } from 'node:path';
@@ -53,12 +54,20 @@ interface AgentHandle {
   cost: number;
 }
 
+interface RemoteAgentHandle {
+  id: string;
+  name: string;
+  role: string;
+  isRemote: true;
+}
+
 export class Orchestrator {
   private deps: AgentDeps;
   private workspace: Workspace;
   private tasks: Task[] = [];
   private taskIndex = new Map<string, Task>();
   private agents = new Map<string, AgentHandle>();
+  private bridge?: RemoteAgentBridge;
   private completedIds = new Set<string>();
   private results: TaskResult[] = [];
   private listeners: Array<(event: OrchestratorEvent) => void> = [];
@@ -76,6 +85,10 @@ export class Orchestrator {
     this.workspace = new Workspace(
       workspaceDir ?? join(process.cwd(), '.xiaobai', 'workspace'),
     );
+  }
+
+  setBridge(bridge: RemoteAgentBridge): void {
+    this.bridge = bridge;
   }
 
   onEvent(listener: (event: OrchestratorEvent) => void): () => void {
@@ -203,6 +216,25 @@ export class Orchestrator {
       let launched = 0;
       while (runningCount + launched < maxConcurrency && readyTasks.length > 0) {
         const task = readyTasks.shift()!;
+
+        // Check for remote agent matching the task role
+        const remoteHandle = this.tryCreateRemoteHandle(task.role);
+        if (remoteHandle) {
+          task.status = 'assigned';
+          task.assignedAgentId = remoteHandle.id;
+          task.startedAt = Date.now();
+
+          const p = this.runRemoteTask(remoteHandle, task).catch((err) => {
+            console.error(`[orchestrator] Remote task ${task.id} failed:`, err);
+          }).finally(() => {
+            const resolve = this.taskSettledResolvers.shift();
+            if (resolve) resolve();
+          });
+          inflight.push(p);
+          launched++;
+          continue;
+        }
+
         const handle = this.createAgentHandle(task.role, 0);
         if (!handle) continue;
 
@@ -371,6 +403,51 @@ export class Orchestrator {
     const handle: AgentHandle = { id, role, loop, busy: false, depth, cost: 0 };
     this.agents.set(id, handle);
     return handle;
+  }
+
+  private tryCreateRemoteHandle(role: string): RemoteAgentHandle | null {
+    if (!this.bridge) return null;
+    const agents = this.bridge.listAgents();
+    const match = agents.find((a) => a.role === role);
+    if (!match) return null;
+
+    return {
+      id: `remote_${match.name}_${++this.agentCounter}`,
+      name: match.name,
+      role,
+      isRemote: true,
+    };
+  }
+
+  private async runRemoteTask(handle: RemoteAgentHandle, task: Task): Promise<void> {
+    task.status = 'running';
+    this.emit({ type: 'task_started', task, agentId: handle.id });
+
+    const startTime = Date.now();
+    const result = await this.bridge!.executeRemoteTask(handle.name, task.description);
+
+    const taskResult: TaskResult = {
+      taskId: task.id,
+      success: result.success,
+      output: result.output,
+      artifacts: [],
+      tokensUsed: result.tokensUsed ?? 0,
+      durationMs: Date.now() - startTime,
+      error: result.error,
+    };
+
+    task.status = result.success ? 'completed' : 'failed';
+    task.completedAt = Date.now();
+    task.result = taskResult;
+    this.results.push(taskResult);
+    this.completedIds.add(task.id);
+
+    if (result.success) {
+      this.workspace.set(`result:${task.id}`, taskResult, handle.id);
+      this.emit({ type: 'task_completed', task, result: taskResult });
+    } else {
+      this.emit({ type: 'task_failed', task, error: result.error ?? 'Remote task failed' });
+    }
   }
 
   private buildTaskContext(task: Task): string {

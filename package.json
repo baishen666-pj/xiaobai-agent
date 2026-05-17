@@ -1,7 +1,7 @@
 {
   "name": "xiaobai-agent",
-  "version": "0.7.0",
-  "description": "Fusion AI agent — multi-agent orchestration, 18+ LLM providers, streaming CLI, MCP integration, real-time dashboard, skill system, plugin marketplace",
+  "version": "0.8.0",
+  "description": "Fusion AI agent — multi-agent orchestration, 18+ LLM providers, streaming CLI, MCP integration, real-time dashboard, skill system, plugin marketplace, RAG knowledge, workflow engine, A2A/ACP federation",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
