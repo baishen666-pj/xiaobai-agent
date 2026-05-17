@@ -11,6 +11,7 @@ import { SandboxManager } from '../sandbox/manager.js';
 import { SkillSystem } from '../skills/system.js';
 import type { PluginManager } from '../plugins/manager.js';
 import { join } from 'node:path';
+import { FileWatcher, type FileWatcherOptions } from '../tools/file-watcher.js';
 
 export interface AgentDeps {
   config: ConfigManager;
@@ -29,6 +30,7 @@ export interface AgentDeps {
 export class XiaobaiAgent {
   private loop: AgentLoop;
   private deps: AgentDeps;
+  private watcher?: FileWatcher;
 
   constructor(deps: AgentDeps) {
     this.deps = deps;
@@ -123,12 +125,21 @@ export class XiaobaiAgent {
   }
 
   async destroy(): Promise<void> {
+    this.watcher?.stop();
     if (this.deps.plugins) {
       await this.deps.plugins.deactivateAll();
     }
     if (this.deps.mcp) {
       await this.deps.mcp.disconnectAll();
     }
+  }
+
+  startWatcher(options: Omit<FileWatcherOptions, 'rootDir'> & { rootDir?: string }): FileWatcher | undefined {
+    if (this.watcher) this.watcher.stop();
+    const rootDir = options.rootDir ?? process.cwd();
+    this.watcher = new FileWatcher({ ...options, rootDir });
+    this.watcher.start();
+    return this.watcher;
   }
 
   static async create(configDir?: string): Promise<XiaobaiAgent> {

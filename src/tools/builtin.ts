@@ -5,6 +5,9 @@ import { bashTool, truncate, isPathSafe, isBinaryContent, execStreaming, MAX_OUT
 import { readTool, writeTool, editTool } from './builtin-file.js';
 import { grepTool, globTool, rgAvailable, _resetRgCache } from './builtin-search.js';
 import { memoryTool, createAgentTool, type ToolContextExtended } from './builtin-misc.js';
+import { gitTool } from './builtin-git.js';
+import { diagnosticsTool } from './builtin-diagnostics.js';
+import { depsTool } from './builtin-deps.js';
 import type { Tool } from './registry.js';
 
 // NOTE: Tools are now split across domain-specific files:
@@ -37,5 +40,9 @@ export function getBuiltinTools(context?: ToolContextExtended): Tool[] {
     // Phase 3: Code intelligence
     astEditTool,
     codeIndexTool,
+    // Phase 11: Code understanding
+    gitTool,
+    diagnosticsTool,
+    depsTool,
   ];
 }
