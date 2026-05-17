@@ -22,11 +22,19 @@ export function registerChatCommand(program: Command): Command {
     .option('--auto', 'Auto-approve all tool calls')
     .option('--dashboard [port]', 'Enable dashboard with optional port')
     .option('-r, --resume [sessionId]', 'Resume a previous session (latest if no ID given)')
-    .action(async (options: Record<string, string>) => {
-      printBanner();
-
+    .option('--tui', 'Use Ink TUI multi-panel interface')
+    .action(async (opts: Record<string, unknown>) => {
+      const options = opts as Record<string, string>;
       try {
         const agent = await XiaobaiAgent.create();
+
+        if (opts.tui === true) {
+          const { startTui } = await import('./tui/index.js');
+          await startTui(agent, { model: options.model, auto: opts.auto === true });
+          return;
+        }
+
+        printBanner();
         const spinner = new Spinner();
         const permPrompt = new PermissionPrompt(options.auto ? 'auto' : 'default', agent.getDeps().security);
         const streamRenderer = new StreamingMarkdownRenderer();

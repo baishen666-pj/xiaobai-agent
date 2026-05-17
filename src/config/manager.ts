@@ -59,12 +59,12 @@ export interface XiaobaiConfig {
     compactModel?: string;
   };
   telemetry?: {
-    enabled: boolean;
+    enabled?: boolean;
     maxTraces?: number;
     sampleRate?: number;
   };
   persistence?: {
-    enabled: boolean;
+    enabled?: boolean;
     adapter?: 'json' | 'sqlite' | 'memory';
     path?: string;
   };

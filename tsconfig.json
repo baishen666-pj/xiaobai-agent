@@ -14,7 +14,9 @@
     "declarationMap": true,
     "sourceMap": true,
     "lib": ["ES2022"],
-    "types": ["node"]
+    "types": ["node"],
+    "jsx": "react-jsx",
+    "jsxImportSource": "react"
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist", "tests", "src/dashboard", "vite.config.ts"]
