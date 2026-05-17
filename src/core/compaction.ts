@@ -1,5 +1,6 @@
 import type { Message } from '../session/manager.js';
 import type { ProviderRouter } from '../provider/router.js';
+import { extractText } from '../types/content-types.js';
 
 const CHARS_PER_TOKEN = 4;
 
@@ -77,7 +78,7 @@ export class CompactionEngine {
   estimateTokens(messages: Message[]): number {
     let totalChars = 0;
     for (const msg of messages) {
-      totalChars += msg.content.length;
+      totalChars += extractText(msg.content).length;
       if (msg.toolCallId) totalChars += msg.toolCallId.length;
       if (msg.toolCalls) {
         for (const tc of msg.toolCalls) {
@@ -93,7 +94,7 @@ export class CompactionEngine {
       .map((m) => {
         const prefix = m.role === 'system' ? 'SYSTEM' : m.role === 'assistant' ? 'ASSISTANT' : m.role === 'user' ? 'USER' : 'TOOL';
         const suffix = m.toolCallId ? ` (tool: ${m.toolCallId})` : '';
-        return `[${prefix}${suffix}]: ${m.content.slice(0, 500)}`;
+        return `[${prefix}${suffix}]: ${extractText(m.content).slice(0, 500)}`;
       })
       .join('\n');
 
@@ -122,7 +123,7 @@ export class CompactionEngine {
   }
 
   private fallbackSummary(messages: Message[]): string {
-    const toolCalls = messages.filter((m) => m.role === 'assistant' && m.content.includes('tool'));
+    const toolCalls = messages.filter((m) => m.role === 'assistant' && extractText(m.content).includes('tool'));
     const userMessages = messages.filter((m) => m.role === 'user');
     return (
       `[Auto-summary: ${messages.length} messages, ${userMessages.length} user turns, ${toolCalls.length} tool interactions]`

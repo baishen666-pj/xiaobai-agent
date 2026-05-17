@@ -151,21 +151,32 @@ export class GoogleProvider implements LLMProvider {
 
     for (const m of messages) {
       if (m.role === 'system') {
-        systemParts.push(m.content);
+        systemParts.push(typeof m.content === 'string' ? m.content : m.content.filter(p => p.type === 'text').map(p => p.type === 'text' ? p.text : '').join(''));
         continue;
       }
       if (m.role === 'tool_result') {
-        pendingToolResults.set(m.toolCallId ?? '', m.content);
+        const textContent = typeof m.content === 'string' ? m.content : m.content.filter(p => p.type === 'text').map(p => p.type === 'text' ? p.text : '').join('');
+        pendingToolResults.set(m.toolCallId ?? '', textContent);
         continue;
       }
       if (m.role === 'assistant' && m.toolCalls?.length) {
         const parts: GoogleContentPart[] = [];
-        if (m.content) parts.push({ text: m.content });
+        const text = typeof m.content === 'string' ? m.content : m.content.filter(p => p.type === 'text').map(p => p.type === 'text' ? p.text : '').join('');
+        if (text) parts.push({ text });
         for (const tc of m.toolCalls) {
           parts.push({ functionCall: { name: tc.name, args: tc.arguments } });
           pendingToolResults.set(tc.id, '');
         }
         contents.push({ role: 'model', parts });
+        continue;
+      }
+      if (Array.isArray(m.content)) {
+        const parts: GoogleContentPart[] = m.content.map(part => {
+          if (part.type === 'text') return { text: part.text };
+          if (part.type === 'image') return { inlineData: { mimeType: part.mimeType, data: part.data } };
+          return { text: '' };
+        });
+        contents.push({ role: m.role === 'assistant' ? 'model' : 'user', parts });
         continue;
       }
       contents.push({

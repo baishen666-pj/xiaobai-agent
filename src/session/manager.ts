@@ -2,10 +2,13 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { readFile, writeFile, readdir, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
+import type { MessageContent } from '../types/content-types.js';
+
+export type { MessageContent } from '../types/content-types.js';
 
 export interface Message {
   role: 'user' | 'assistant' | 'system' | 'tool_result';
-  content: string;
+  content: MessageContent;
   toolCallId?: string;
   toolCalls?: Array<{
     id: string;

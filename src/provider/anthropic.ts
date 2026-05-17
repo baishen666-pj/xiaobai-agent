@@ -138,7 +138,7 @@ export class AnthropicProvider implements LLMProvider {
 
   private formatMessages(messages: Message[]) {
     type AnthropicToolResultContent = { type: 'tool_result'; tool_use_id: string; content: string };
-    type AnthropicContentBlock = AnthropicTextBlock | AnthropicToolUseBlock | AnthropicToolResultContent;
+    type AnthropicContentBlock = AnthropicTextBlock | AnthropicToolUseBlock | AnthropicToolResultContent | { type: 'image'; source: { type: 'base64' | 'url'; media_type?: string; data?: string; url?: string } };
     type AnthropicMessageContent = string | AnthropicContentBlock[];
 
     const formatted: Array<{ role: 'user' | 'assistant'; content: AnthropicMessageContent }> = [];
@@ -146,22 +146,40 @@ export class AnthropicProvider implements LLMProvider {
       if (m.role === 'system') continue;
       if (m.role === 'tool_result') {
         const last = formatted[formatted.length - 1];
+        const textContent = typeof m.content === 'string' ? m.content : m.content.filter(p => p.type === 'text').map(p => p.type === 'text' ? p.text : '').join('');
         if (last?.role === 'assistant' && Array.isArray(last.content)) {
-          (last.content as AnthropicContentBlock[]).push({ type: 'tool_result', tool_use_id: m.toolCallId ?? '', content: m.content });
+          (last.content as AnthropicContentBlock[]).push({ type: 'tool_result', tool_use_id: m.toolCallId ?? '', content: textContent });
         } else {
-          formatted.push({ role: 'user', content: [{ type: 'tool_result', tool_use_id: m.toolCallId ?? '', content: m.content }] });
+          formatted.push({ role: 'user', content: [{ type: 'tool_result', tool_use_id: m.toolCallId ?? '', content: textContent }] });
         }
         continue;
       }
       if (m.role === 'assistant' && m.toolCalls?.length) {
         const content: AnthropicContentBlock[] = [];
-        if (m.content) {
-          content.push({ type: 'text', text: m.content });
+        const text = typeof m.content === 'string' ? m.content : m.content.filter(p => p.type === 'text').map(p => p.type === 'text' ? p.text : '').join('');
+        if (text) {
+          content.push({ type: 'text', text });
         }
         for (const tc of m.toolCalls) {
           content.push({ type: 'tool_use', id: tc.id, name: tc.name, input: tc.arguments });
         }
         formatted.push({ role: 'assistant', content });
+        continue;
+      }
+      if (Array.isArray(m.content)) {
+        const content: AnthropicContentBlock[] = m.content.map(part => {
+          if (part.type === 'text') return { type: 'text' as const, text: part.text };
+          if (part.type === 'image') {
+            return {
+              type: 'image' as const,
+              source: part.source === 'base64'
+                ? { type: 'base64' as const, media_type: part.mimeType, data: part.data }
+                : { type: 'url' as const, url: part.data },
+            };
+          }
+          return { type: 'text' as const, text: '' };
+        });
+        formatted.push({ role: m.role as 'user' | 'assistant', content });
         continue;
       }
       formatted.push({ role: m.role as 'user' | 'assistant', content: m.content });

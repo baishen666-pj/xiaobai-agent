@@ -162,28 +162,43 @@ export class OpenAICompatibleProvider implements LLMProvider {
   }
 
   private formatMessages(messages: Message[]) {
-    type OpenAIMessage = { role: 'system' | 'user' | 'assistant' | 'tool'; content: string | null; tool_calls?: Array<{ id: string; type: 'function'; function: { name: string; arguments: string } }>; tool_call_id?: string };
+    type OpenAIContentPart = { type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } };
+    type OpenAIMessage = { role: 'system' | 'user' | 'assistant' | 'tool'; content: string | OpenAIContentPart[] | null; tool_calls?: Array<{ id: string; type: 'function'; function: { name: string; arguments: string } }>; tool_call_id?: string };
 
     const formatted: OpenAIMessage[] = [];
     for (const m of messages) {
       if (m.role === 'system') {
-        formatted.push({ role: 'system', content: m.content });
+        formatted.push({ role: 'system', content: typeof m.content === 'string' ? m.content : m.content.filter(p => p.type === 'text').map(p => p.type === 'text' ? p.text : '').join('') });
         continue;
       }
       if (m.role === 'tool_result') {
-        formatted.push({ role: 'tool', content: m.content, tool_call_id: m.toolCallId ?? '' });
+        const textContent = typeof m.content === 'string' ? m.content : m.content.filter(p => p.type === 'text').map(p => p.type === 'text' ? p.text : '').join('');
+        formatted.push({ role: 'tool', content: textContent, tool_call_id: m.toolCallId ?? '' });
         continue;
       }
       if (m.role === 'assistant' && m.toolCalls?.length) {
+        const text = typeof m.content === 'string' ? m.content : m.content.filter(p => p.type === 'text').map(p => p.type === 'text' ? p.text : '').join('');
         formatted.push({
           role: 'assistant',
-          content: m.content || null,
+          content: text || null,
           tool_calls: m.toolCalls.map((tc) => ({
             id: tc.id,
             type: 'function' as const,
             function: { name: tc.name, arguments: typeof tc.arguments === 'string' ? tc.arguments : JSON.stringify(tc.arguments) },
           })),
         });
+        continue;
+      }
+      if (Array.isArray(m.content)) {
+        const parts: OpenAIContentPart[] = m.content.map(part => {
+          if (part.type === 'text') return { type: 'text' as const, text: part.text };
+          if (part.type === 'image') {
+            const url = part.source === 'base64' ? `data:${part.mimeType};base64,${part.data}` : part.data;
+            return { type: 'image_url' as const, image_url: { url } };
+          }
+          return { type: 'text' as const, text: '' };
+        });
+        formatted.push({ role: m.role as 'user' | 'assistant', content: parts });
         continue;
       }
       formatted.push({ role: m.role as 'user' | 'assistant', content: m.content });

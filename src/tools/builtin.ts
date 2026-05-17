@@ -8,6 +8,10 @@ import { memoryTool, createAgentTool, type ToolContextExtended } from './builtin
 import { gitTool } from './builtin-git.js';
 import { diagnosticsTool } from './builtin-diagnostics.js';
 import { depsTool } from './builtin-deps.js';
+import { imageTool } from './builtin-image.js';
+import { definitionTool } from './builtin-definition.js';
+import { referencesTool } from './builtin-references.js';
+import { typeInfoTool } from './builtin-typeinfo.js';
 import type { Tool } from './registry.js';
 
 // NOTE: Tools are now split across domain-specific files:
@@ -44,5 +48,11 @@ export function getBuiltinTools(context?: ToolContextExtended): Tool[] {
     gitTool,
     diagnosticsTool,
     depsTool,
+    // Phase 10: Image tool
+    imageTool,
+    // Phase 12: AST code intelligence
+    definitionTool,
+    referencesTool,
+    typeInfoTool,
   ];
 }

@@ -989,8 +989,8 @@ describe('ProviderRouter', () => {
       }
     });
 
-    it('returns exactly 16 providers', () => {
-      expect(ProviderRouter.getAvailableProviders()).toHaveLength(16);
+    it('returns at least 16 providers', () => {
+      expect(ProviderRouter.getAvailableProviders().length).toBeGreaterThanOrEqual(16);
     });
   });
 

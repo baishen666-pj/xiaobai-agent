@@ -36,6 +36,12 @@ const PROVIDER_FACTORIES: Record<string, (config: ProviderConfig) => LLMProvider
   'claude-web': (c) => new AnthropicProvider({ ...c, name: 'claude-web' }),
   'chatgpt-web': (c) => new OpenAICompatibleProvider({ ...c, name: 'chatgpt-web', baseUrl: c.baseUrl ?? 'https://api.openai.com/v1' }),
 
+  // Additional providers
+  cohere: (c) => new OpenAICompatibleProvider({ ...c, name: 'cohere', baseUrl: c.baseUrl ?? 'https://api.cohere.com/v2' }),
+  mistral: (c) => new OpenAICompatibleProvider({ ...c, name: 'mistral', baseUrl: c.baseUrl ?? 'https://api.mistral.ai/v1' }),
+  xai: (c) => new OpenAICompatibleProvider({ ...c, name: 'xai', baseUrl: c.baseUrl ?? 'https://api.x.ai/v1' }),
+  perplexity: (c) => new OpenAICompatibleProvider({ ...c, name: 'perplexity', baseUrl: c.baseUrl ?? 'https://api.perplexity.ai' }),
+
   // Generic fallback
   openaiCompatible: (c) => new OpenAICompatibleProvider(c),
 };
@@ -293,6 +299,10 @@ export class ProviderRouter {
       baichuan: ['BAICHUAN_API_KEY'],
       'claude-web': ['CLAUDE_WEB_TOKEN', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY'],
       'chatgpt-web': ['CHATGPT_WEB_TOKEN', 'OPENAI_SESSION_TOKEN', 'OPENAI_API_KEY'],
+      cohere: ['COHERE_API_KEY'],
+      mistral: ['MISTRAL_API_KEY'],
+      xai: ['XAI_API_KEY'],
+      perplexity: ['PERPLEXITY_API_KEY'],
     };
     const keys = envMap[provider] ?? [];
     for (const key of keys) {
