@@ -82,6 +82,18 @@ export interface XiaobaiConfig {
       maxRequests?: number;
     };
   };
+  protocols?: {
+    a2a?: {
+      enabled?: boolean;
+      port?: number;
+      auth?: Record<string, string>;
+    };
+    acp?: {
+      enabled?: boolean;
+      port?: number;
+    };
+  };
+  locale?: string;
 }
 
 export interface ProviderConfig {

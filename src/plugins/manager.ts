@@ -7,6 +7,7 @@ import type { HookSystem } from '../hooks/system.js';
 import type { ConfigManager } from '../config/manager.js';
 import type { MemorySystem } from '../memory/system.js';
 import type { ProviderRouter } from '../provider/router.js';
+import type { SandboxManager } from '../sandbox/manager.js';
 import { PluginAPIImpl } from './api.js';
 import { discoverPlugins, loadPluginModule } from './loader.js';
 
@@ -20,6 +21,19 @@ interface PluginHandle {
   dir: string;
 }
 
+const APP_VERSION = '0.7.0';
+
+function satisfiesMinVersion(minVersion: string, appVersion: string): boolean {
+  const parseVer = (v: string) => v.split('.').map(Number);
+  const min = parseVer(minVersion);
+  const app = parseVer(appVersion);
+  for (let i = 0; i < 3; i++) {
+    if ((app[i] ?? 0) < (min[i] ?? 0)) return false;
+    if ((app[i] ?? 0) > (min[i] ?? 0)) return true;
+  }
+  return true;
+}
+
 export class PluginManager {
   private plugins = new Map<string, PluginHandle>();
   private pluginsDir: string;
@@ -31,6 +45,9 @@ export class PluginManager {
     memory: MemorySystem;
     providers: ProviderRouter;
   };
+  private sandbox?: SandboxManager;
+  private watcher?: fs.FSWatcher;
+  private debounceTimers = new Map<string, NodeJS.Timeout>();
 
   constructor(deps: {
     tools: ToolRegistry;
@@ -39,8 +56,10 @@ export class PluginManager {
     memory: MemorySystem;
     providers: ProviderRouter;
     pluginsDir?: string;
+    sandbox?: SandboxManager;
   }) {
     this.deps = deps;
+    this.sandbox = deps.sandbox;
     this.pluginsDir = deps.pluginsDir ?? join(homedir(), '.xiaobai', 'default', 'plugins');
   }
 
@@ -49,6 +68,16 @@ export class PluginManager {
 
     for (const entry of discovered) {
       try {
+        if (entry.manifest.minAppVersion && !satisfiesMinVersion(entry.manifest.minAppVersion, APP_VERSION)) {
+          this.errors.push({
+            pluginName: entry.manifest.name,
+            phase: 'load',
+            error: new Error(`Plugin requires >=${entry.manifest.minAppVersion}, but app is ${APP_VERSION}`),
+            timestamp: Date.now(),
+          });
+          continue;
+        }
+
         const plugin = await loadPluginModule(entry);
         const api = new PluginAPIImpl(
           entry.manifest.name,
@@ -59,6 +88,7 @@ export class PluginManager {
           this.deps.memory,
           this.deps.providers,
           (err) => this.errors.push(err),
+          this.sandbox,
         );
 
         api.setState('loaded');
@@ -206,5 +236,84 @@ export class PluginManager {
     }
 
     this.plugins.delete(name);
+  }
+
+  startWatching(): void {
+    if (this.watcher) return;
+    if (!fs.existsSync(this.pluginsDir)) return;
+
+    this.watcher = fs.watch(this.pluginsDir, { recursive: true }, (_event, filename) => {
+      if (!filename) return;
+      const pluginName = filename.split(/[/\\]/)[0];
+      if (!pluginName) return;
+
+      const existing = this.debounceTimers.get(pluginName);
+      if (existing) clearTimeout(existing);
+
+      this.debounceTimers.set(pluginName, setTimeout(() => {
+        this.debounceTimers.delete(pluginName);
+        void this.reloadPlugin(pluginName);
+      }, 300));
+    });
+  }
+
+  stopWatching(): void {
+    if (this.watcher) {
+      this.watcher.close();
+      this.watcher = undefined;
+    }
+    for (const timer of this.debounceTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.debounceTimers.clear();
+  }
+
+  private async reloadPlugin(name: string): Promise<void> {
+    const handle = this.plugins.get(name);
+    if (!handle) return;
+
+    const wasActivated = handle.state === 'activated';
+    if (wasActivated) {
+      await this.deactivate(name);
+    }
+
+    const pluginDir = handle.dir;
+    this.plugins.delete(name);
+
+    const discovered = discoverPlugins(this.pluginsDir).filter(d => d.manifest.name === name);
+    if (discovered.length === 0) return;
+
+    try {
+      const plugin = await loadPluginModule(discovered[0]);
+      const api = new PluginAPIImpl(
+        discovered[0].manifest.name,
+        discovered[0].manifest,
+        this.deps.tools,
+        this.deps.hooks,
+        this.deps.config,
+        this.deps.memory,
+        this.deps.providers,
+        (err) => this.errors.push(err),
+        this.sandbox,
+      );
+
+      api.setState('loaded');
+
+      if (plugin.init) await plugin.init(api);
+      api.setState('initialized');
+
+      this.plugins.set(name, { plugin, api, state: api.state, dir: pluginDir });
+
+      if (wasActivated) {
+        await this.activate(name);
+      }
+    } catch (err) {
+      this.errors.push({
+        pluginName: name,
+        phase: 'reload',
+        error: err instanceof Error ? err : new Error(String(err)),
+        timestamp: Date.now(),
+      });
+    }
   }
 }

@@ -463,6 +463,71 @@ export function registerPluginsCommand(program: Command): Command {
           await plugins.uninstall(name);
           console.log(chalk.green(`  Uninstalled plugin: ${name}`));
         }),
+    )
+    .addCommand(
+      new Command('search <query>')
+        .description('Search the plugin marketplace')
+        .option('-t, --tag <tag>', 'Filter by tag')
+        .option('--author <author>', 'Filter by author')
+        .option('-s, --sort <field>', 'Sort by: rating, downloads, updated, name', 'rating')
+        .option('-n, --limit <n>', 'Max results', '20')
+        .action(async (query: string, options: { tag?: string; author?: string; sort: string; limit: string }) => {
+          const { UnifiedMarketplace } = await import('../plugins/unified-marketplace.js');
+          const marketplace = new UnifiedMarketplace();
+          const results = await marketplace.search(query, {
+            tags: options.tag ? [options.tag] : undefined,
+            author: options.author,
+            sortBy: options.sort as 'rating' | 'downloads' | 'updated' | 'name',
+            limit: parseInt(options.limit, 10),
+          });
+          if (results.length === 0) {
+            console.log(chalk.gray(`  No plugins matching "${query}".`));
+            return;
+          }
+          console.log(chalk.cyan.bold(`\n  Marketplace Results (${results.length})\n`));
+          console.log(marketplace.formatList(results));
+          console.log();
+        }),
+    )
+    .addCommand(
+      new Command('browse')
+        .description('Browse the plugin marketplace')
+        .argument('[category]', 'Filter by category')
+        .action(async (category?: string) => {
+          const { UnifiedMarketplace } = await import('../plugins/unified-marketplace.js');
+          const marketplace = new UnifiedMarketplace();
+          const entries = await marketplace.browse(category);
+          if (entries.length === 0) {
+            console.log(chalk.gray(category ? `  No plugins in category "${category}".` : '  No plugins available.'));
+            return;
+          }
+          const stats = marketplace.getStats();
+          console.log(chalk.cyan.bold(`\n  Marketplace (${stats.total} plugins, ${stats.installed} installed)\n`));
+          console.log(marketplace.formatList(entries));
+          console.log();
+        }),
+    )
+    .addCommand(
+      new Command('activate <name>')
+        .description('Activate a plugin')
+        .action(async (name: string) => {
+          const agent = await XiaobaiAgent.create();
+          const plugins = agent.getPlugins();
+          if (!plugins) { console.log(chalk.red('Plugins not enabled.')); return; }
+          await plugins.activate(name);
+          console.log(chalk.green(`  Activated plugin: ${name}`));
+        }),
+    )
+    .addCommand(
+      new Command('deactivate <name>')
+        .description('Deactivate a plugin')
+        .action(async (name: string) => {
+          const agent = await XiaobaiAgent.create();
+          const plugins = agent.getPlugins();
+          if (!plugins) { console.log(chalk.red('Plugins not enabled.')); return; }
+          await plugins.deactivate(name);
+          console.log(chalk.green(`  Deactivated plugin: ${name}`));
+        }),
     );
 
   return program;

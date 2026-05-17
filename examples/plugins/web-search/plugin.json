@@ -1,0 +1,11 @@
+{
+  "name": "web-search",
+  "version": "1.0.0",
+  "description": "Web search tool and provider integration",
+  "author": "xiaobai",
+  "permissions": ["tools:register", "providers:register"],
+  "provides": {
+    "tools": ["web-search"],
+    "providers": ["web-search"]
+  }
+}

@@ -18,6 +18,11 @@ const ManifestSchema = z.object({
     'config:read', 'config:write',
     'memory:read', 'memory:write',
   ])).default([]),
+  sandbox: z.object({
+    mode: z.enum(['read-only', 'workspace-write', 'full-access']),
+    network: z.enum(['allow-all', 'deny-all', 'allow-list']).optional(),
+    allowedDomains: z.array(z.string()).optional(),
+  }).optional(),
   provides: z.object({
     tools: z.array(z.string()).optional(),
     providers: z.array(z.string()).optional(),

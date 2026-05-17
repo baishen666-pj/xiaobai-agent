@@ -1,6 +1,6 @@
 {
   "name": "xiaobai-agent",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Fusion AI agent — multi-agent orchestration, 18+ LLM providers, streaming CLI, MCP integration, real-time dashboard, skill system, plugin marketplace",
   "type": "module",
   "main": "dist/index.js",
@@ -55,7 +55,8 @@
     "lint": "eslint src/",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "npm run build:dashboard && npm run typecheck && vitest run --exclude 'tests/e2e/**'",
-    "prepack": "npm run build"
+    "prepack": "npm run build",
+    "bench": "vitest run tests/bench/ --reporter=verbose"
   },
   "keywords": [
     "ai",

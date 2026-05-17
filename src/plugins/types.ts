@@ -1,6 +1,7 @@
-import type { Tool } from '../tools/registry.js';
+import type { Tool, ToolResult } from '../tools/registry.js';
 import type { HookEvent, HookResult } from '../hooks/system.js';
 import type { LLMProvider, ProviderConfig } from '../provider/types.js';
+import type { SandboxMode, NetworkMode } from '../sandbox/manager.js';
 
 export type PluginPermission =
   | 'tools:register'
@@ -20,6 +21,12 @@ export type PluginState =
   | 'deactivated'
   | 'error';
 
+export interface PluginSandboxConfig {
+  mode: SandboxMode;
+  network?: NetworkMode;
+  allowedDomains?: string[];
+}
+
 export interface PluginManifest {
   name: string;
   version: string;
@@ -28,6 +35,7 @@ export interface PluginManifest {
   homepage?: string;
   minAppVersion?: string;
   permissions: PluginPermission[];
+  sandbox?: PluginSandboxConfig;
   provides?: {
     tools?: string[];
     providers?: string[];
@@ -49,6 +57,7 @@ export interface PluginAPI {
   tools: {
     register(tool: Tool): void;
     unregister(name: string): void;
+    execute(name: string, args: Record<string, unknown>): Promise<ToolResult>;
   };
 
   hooks: {

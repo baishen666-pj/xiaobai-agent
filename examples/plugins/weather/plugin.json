@@ -1,0 +1,10 @@
+{
+  "name": "weather",
+  "version": "1.0.0",
+  "description": "Get current weather for a city",
+  "author": "xiaobai",
+  "permissions": ["tools:register"],
+  "provides": {
+    "tools": ["weather"]
+  }
+}

@@ -73,6 +73,7 @@ export interface SendMessageRequest {
   configuration?: {
     acceptedOutputModes?: string[];
     historyLength?: number;
+    contextId?: string;
   };
 }
 

@@ -13,7 +13,9 @@ import { createAuthChecker, type AuthConfig } from '../../security/auth.js';
 
 export interface A2AServerHandler {
   onMessage(message: A2AMessage, config?: SendMessageRequest['configuration']): Promise<SendMessageResponse>;
+  onStreamMessage?(message: A2AMessage, res: ServerResponse): Promise<void>;
   onGetTask(taskId: string): Promise<A2ATask | null>;
+  onListTasks?(filter?: { status?: string; limit?: number; offset?: number }): Promise<A2ATask[]>;
   onCancelTask(taskId: string): Promise<A2ATask | null>;
 }
 
@@ -27,7 +29,7 @@ function buildDefaultAgentCard(): AgentCard {
   return {
     name: 'xiaobai-agent',
     description: 'Fusion AI agent with multi-agent orchestration, 18+ LLM providers, and MCP integration',
-    version: '0.5.0',
+    version: '0.7.0',
     capabilities: { streaming: true, pushNotifications: false },
     defaultInputModes: ['text/plain'],
     defaultOutputModes: ['text/plain'],
@@ -97,10 +99,39 @@ export class A2AServer {
         return;
       }
 
+      if (method === 'POST' && url.pathname === '/message/stream') {
+        if (this.ctx.handler.onStreamMessage) {
+          const body = await this.readBody(req);
+          res.writeHead(200, {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+          });
+          await this.ctx.handler.onStreamMessage(body.message, res);
+          res.end();
+        } else {
+          this.json(res, { error: { code: -32601, message: 'Streaming not supported' } }, 501);
+        }
+        return;
+      }
+
       if (method === 'POST' && url.pathname === '/message/send') {
         const body = await this.readBody(req);
         const response = await this.ctx.handler.onMessage(body.message, body.configuration);
         this.json(res, response);
+        return;
+      }
+
+      if (method === 'GET' && url.pathname === '/tasks') {
+        if (this.ctx.handler.onListTasks) {
+          const status = url.searchParams.get('status') ?? undefined;
+          const limit = url.searchParams.has('limit') ? parseInt(url.searchParams.get('limit')!, 10) : undefined;
+          const offset = url.searchParams.has('offset') ? parseInt(url.searchParams.get('offset')!, 10) : undefined;
+          const tasks = await this.ctx.handler.onListTasks({ status, limit, offset });
+          this.json(res, { tasks });
+        } else {
+          this.json(res, { tasks: Array.from(this.ctx.tasks.values()) });
+        }
         return;
       }
 
@@ -163,16 +194,21 @@ class DefaultHandler implements A2AServerHandler {
   async onCancelTask(): Promise<A2ATask | null> { return null; }
 }
 
+function sendSSE(res: ServerResponse, event: string, data: unknown): void {
+  res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+}
+
 export class XiaobaiAgentHandler implements A2AServerHandler {
   private agent: XiaobaiAgent;
   private tasks = new Map<string, A2ATask>();
   private cancelledTasks = new Set<string>();
+  private contextSessions = new Map<string, string>();
 
   constructor(agent: XiaobaiAgent) {
     this.agent = agent;
   }
 
-  async onMessage(message: A2AMessage): Promise<SendMessageResponse> {
+  async onMessage(message: A2AMessage, config?: SendMessageRequest['configuration']): Promise<SendMessageResponse> {
     const taskId = randomUUID();
 
     const text = message.parts
@@ -190,8 +226,18 @@ export class XiaobaiAgentHandler implements A2AServerHandler {
       return { task };
     }
 
+    let sessionId: string | undefined;
+    if (config?.contextId) {
+      sessionId = this.contextSessions.get(config.contextId);
+      if (!sessionId) {
+        sessionId = randomUUID();
+        this.contextSessions.set(config.contextId, sessionId);
+      }
+    }
+
     const workingTask: A2ATask = {
       id: taskId,
+      contextId: config?.contextId,
       status: { state: TS.WORKING, timestamp: new Date().toISOString() },
       history: [message],
     };
@@ -230,8 +276,49 @@ export class XiaobaiAgentHandler implements A2AServerHandler {
     return { task: workingTask };
   }
 
+  async onStreamMessage(message: A2AMessage, res: ServerResponse): Promise<void> {
+    const taskId = randomUUID();
+    const text = message.parts.map((p) => p.text ?? '').filter(Boolean).join('\n');
+
+    if (!text.trim()) {
+      sendSSE(res, 'status', { taskId, state: 'failed' });
+      return;
+    }
+
+    sendSSE(res, 'status', { taskId, state: 'working' });
+
+    try {
+      const output = await this.agent.chatSync(text);
+
+      const task: A2ATask = {
+        id: taskId,
+        status: { state: TS.COMPLETED, timestamp: new Date().toISOString() },
+        history: [
+          message,
+          { messageId: randomUUID(), role: Role.AGENT, parts: [{ text: output }] },
+        ],
+      };
+      this.tasks.set(taskId, task);
+
+      sendSSE(res, 'task_update', task);
+      sendSSE(res, 'status', { taskId, state: 'completed' });
+    } catch (error) {
+      sendSSE(res, 'status', { taskId, state: 'failed', error: (error as Error).message });
+    }
+  }
+
   async onGetTask(taskId: string): Promise<A2ATask | null> {
     return this.tasks.get(taskId) ?? null;
+  }
+
+  async onListTasks(filter?: { status?: string; limit?: number; offset?: number }): Promise<A2ATask[]> {
+    let tasks = Array.from(this.tasks.values());
+    if (filter?.status) {
+      tasks = tasks.filter(t => t.status.state === filter.status);
+    }
+    const offset = filter?.offset ?? 0;
+    const limit = filter?.limit ?? 50;
+    return tasks.slice(offset, offset + limit);
   }
 
   async onCancelTask(taskId: string): Promise<A2ATask | null> {

@@ -8,7 +8,7 @@ import type {
   ACPTaskResult,
   ACPPermissionRequest,
 } from './types.js';
-import { XiaobaiAgent } from '../../core/agent.js';
+import type { XiaobaiAgent } from '../../core/agent.js';
 
 export interface ACPAdapterOptions {
   port?: number;
@@ -17,6 +17,10 @@ export interface ACPAdapterOptions {
 
 interface PendingPermission {
   resolve: (allowed: boolean) => void;
+}
+
+function sendSSE(res: ServerResponse, data: unknown): void {
+  res.write(`data: ${JSON.stringify(data)}\n\n`);
 }
 
 export class ACPAdapter {
@@ -75,6 +79,11 @@ export class ACPAdapter {
       return;
     }
 
+    if (request.method === 'task/stream') {
+      await this.handleTaskStream(request, res);
+      return;
+    }
+
     try {
       const result = await this.route(request);
       this.sendResult(res, request.id, result);
@@ -110,7 +119,7 @@ export class ACPAdapter {
     const model = this.agent.getCurrentModel();
     return {
       name: 'xiaobai-agent',
-      version: '0.3.0',
+      version: '0.7.0',
       capabilities: {
         streaming: true,
         tools: this.agent.getTools().getToolDefinitions().map((t) => t.name),
@@ -124,6 +133,10 @@ export class ACPAdapter {
     const abortController = new AbortController();
     this.activeTasks.set(taskId, abortController);
 
+    if (params.model) {
+      try { this.agent.setModel(params.model); } catch { /* model override best-effort */ }
+    }
+
     try {
       const result = await this.agent.chatSync(params.prompt);
       return { output: result, success: true };
@@ -131,6 +144,38 @@ export class ACPAdapter {
       return { output: (err as Error).message, success: false };
     } finally {
       this.activeTasks.delete(taskId);
+    }
+  }
+
+  private async handleTaskStream(request: ACPRequest, res: ServerResponse): Promise<void> {
+    const params = request.params as unknown as ACPTaskParams;
+    const taskId = randomUUID();
+    const abortController = new AbortController();
+    this.activeTasks.set(taskId, abortController);
+
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+      'Access-Control-Allow-Origin': '*',
+    });
+
+    sendSSE(res, { jsonrpc: '2.0', method: 'task/message', params: { taskId, status: 'working' } });
+
+    if (params.model) {
+      try { this.agent.setModel(params.model); } catch { /* best-effort */ }
+    }
+
+    try {
+      const result = await this.agent.chatSync(params.prompt);
+
+      sendSSE(res, { jsonrpc: '2.0', method: 'task/message', params: { taskId, output: result, partial: false } });
+      sendSSE(res, { jsonrpc: '2.0', method: 'task/complete', params: { taskId, result: { output: result, success: true } } });
+    } catch (err) {
+      sendSSE(res, { jsonrpc: '2.0', method: 'task/error', params: { taskId, error: (err as Error).message } });
+    } finally {
+      this.activeTasks.delete(taskId);
+      res.end();
     }
   }
 

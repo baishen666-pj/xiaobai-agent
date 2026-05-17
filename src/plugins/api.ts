@@ -1,4 +1,4 @@
-import type { Tool } from '../tools/registry.js';
+import type { Tool, ToolResult } from '../tools/registry.js';
 import type { HookEvent, HookResult } from '../hooks/system.js';
 import type { LLMProvider, ProviderConfig } from '../provider/types.js';
 import type { PluginAPI, PluginError, PluginManifest, PluginPermission, PluginState } from './types.js';
@@ -7,6 +7,7 @@ import type { HookSystem } from '../hooks/system.js';
 import type { ProviderRouter } from '../provider/router.js';
 import type { ConfigManager } from '../config/manager.js';
 import type { MemorySystem } from '../memory/system.js';
+import type { SandboxManager } from '../sandbox/manager.js';
 
 type ErrorCb = (error: PluginError) => void;
 
@@ -19,6 +20,7 @@ export class PluginAPIImpl implements PluginAPI {
   private _configManager: ConfigManager;
   private _memorySystem: MemorySystem;
   private _providerRouter: ProviderRouter;
+  private _sandbox?: SandboxManager;
   private _onError: ErrorCb;
 
   constructor(
@@ -30,6 +32,7 @@ export class PluginAPIImpl implements PluginAPI {
     memorySystem: MemorySystem,
     providerRouter: ProviderRouter,
     onError: ErrorCb,
+    sandbox?: SandboxManager,
   ) {
     this._toolRegistry = toolRegistry;
     this._hookSystem = hookSystem;
@@ -37,11 +40,20 @@ export class PluginAPIImpl implements PluginAPI {
     this._memorySystem = memorySystem;
     this._providerRouter = providerRouter;
     this._onError = onError;
+    this._sandbox = sandbox;
   }
 
   private checkPermission(perm: PluginPermission): void {
     if (!this.manifest.permissions.includes(perm)) {
       throw new Error(`Plugin "${this.pluginName}" lacks permission: ${perm}. Declared: [${this.manifest.permissions.join(', ')}]`);
+    }
+  }
+
+  private checkSandbox(toolName: string): void {
+    if (!this._sandbox) return;
+    const internalName = this._toolNames.get(toolName) ?? `${this.pluginName}:${toolName}`;
+    if (!this._sandbox.isToolAllowed(internalName, this.pluginName)) {
+      throw new Error(`Plugin "${this.pluginName}" sandbox blocked tool: ${toolName}`);
     }
   }
 
@@ -93,6 +105,16 @@ export class PluginAPIImpl implements PluginAPI {
           timestamp: Date.now(),
         });
       }
+    },
+
+    execute: async (name: string, args: Record<string, unknown>): Promise<ToolResult> => {
+      this.checkPermission('tools:execute');
+      this.checkSandbox(name);
+      const internalName = this._toolNames.get(name) ?? name;
+      if (!this._toolRegistry.has(internalName)) {
+        throw new Error(`Tool not found: ${name}`);
+      }
+      return this._toolRegistry.execute(internalName, args);
     },
   };
 
