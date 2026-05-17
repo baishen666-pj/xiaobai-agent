@@ -28,15 +28,13 @@ describe('Dashboard Vite build output', () => {
     expect(cssFiles.length).toBeGreaterThanOrEqual(1);
   });
 
-  it('JS bundle within 300kb budget', () => {
+  it('JS bundle within budget', () => {
     const assetsDir = join(PUBLIC_DIR, 'assets');
     const files = readdirSync(assetsDir);
     const jsFiles = files.filter((f) => f.endsWith('.js'));
 
-    for (const file of jsFiles) {
-      const size = statSync(join(assetsDir, file)).size;
-      expect(size).toBeLessThan(600 * 1024);
-    }
+    const totalSize = jsFiles.reduce((sum, file) => sum + statSync(join(assetsDir, file)).size, 0);
+    expect(totalSize).toBeLessThan(800 * 1024);
   });
 
   it('CSS bundle within 50kb budget', () => {

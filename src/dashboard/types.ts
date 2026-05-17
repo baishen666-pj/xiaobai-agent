@@ -205,3 +205,105 @@ export type ServerAck =
   | { type: 'session_created'; sessionId: string }
   | { type: 'session_list_result'; sessions: Array<{ id: string; createdAt: number; updatedAt: number; messageCount: number }> }
   | { type: 'model_changed'; provider: string; model: string };
+
+// ── REST API response types ──
+
+export interface SessionListItem {
+  id: string;
+  createdAt: number;
+  updatedAt: number;
+  messageCount: number;
+}
+
+export interface SessionsResponse {
+  sessions: SessionListItem[];
+}
+
+export interface SessionDetail {
+  id: string;
+  [key: string]: unknown;
+}
+
+export interface ModelsResponse {
+  providers: string[];
+}
+
+export interface ToolDefinition {
+  name: string;
+  description?: string;
+  [key: string]: unknown;
+}
+
+export interface ToolsResponse {
+  tools: ToolDefinition[];
+}
+
+export interface PluginInfo {
+  name: string;
+  [key: string]: unknown;
+}
+
+export interface PluginsResponse {
+  plugins: PluginInfo[];
+}
+
+export interface WorkflowSummary {
+  name: string;
+  version: string;
+  description?: string;
+  tags?: string[];
+  stepCount: number;
+}
+
+export interface WorkflowsResponse {
+  workflows: WorkflowSummary[];
+}
+
+export interface WorkflowRunResult {
+  runId: string;
+  status: string;
+  stepResults: Record<string, unknown>;
+  startedAt: number;
+  completedAt?: number;
+}
+
+export interface ChatResponse {
+  content: string;
+  model: string;
+  timestamp: number;
+}
+
+export interface ApiError {
+  error: string;
+  details?: unknown;
+}
+
+export interface HealthSubsystemCheck {
+  status: 'healthy' | 'degraded' | 'unhealthy';
+  latencyMs: number;
+  detail?: string;
+}
+
+export interface HealthResult {
+  status: 'healthy' | 'degraded' | 'unhealthy';
+  timestamp: number;
+  uptime: number;
+  version: string;
+  checks: {
+    provider?: HealthSubsystemCheck;
+    memory?: HealthSubsystemCheck;
+    sessions?: HealthSubsystemCheck;
+    mcp?: HealthSubsystemCheck;
+  };
+  details: Record<string, unknown>;
+}
+
+export interface LivenessResult {
+  alive: boolean;
+  uptime: number;
+}
+
+export interface ReadinessResult {
+  ready: boolean;
+  checks: HealthResult['checks'];
+}
