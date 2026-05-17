@@ -72,6 +72,16 @@ export interface XiaobaiConfig {
     sseEnabled?: boolean;
     heartbeatIntervalMs?: number;
   };
+  apiGateway?: {
+    enabled?: boolean;
+    cors?: {
+      origins?: string[];
+    };
+    rateLimit?: {
+      windowMs?: number;
+      maxRequests?: number;
+    };
+  };
 }
 
 export interface ProviderConfig {

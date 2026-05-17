@@ -1,0 +1,20 @@
+services:
+  xiaobai:
+    build: .
+    ports:
+      - "3001:3001"
+    volumes:
+      - ~/.xiaobai:/root/.xiaobai
+    environment:
+      - XIAOBAI_PROVIDER=${XIAOBAI_PROVIDER:-anthropic}
+      - XIAOBAI_LOG_LEVEL=${XIAOBAI_LOG_LEVEL:-info}
+      - XIAOBAI_LOG_FORMAT=${XIAOBAI_LOG_FORMAT:-json}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3001/health/live').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s

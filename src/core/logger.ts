@@ -182,6 +182,18 @@ export class StructuredLogger {
   }
 }
 
+export function createProduction(filePath?: string): StructuredLogger {
+  const level = (process.env.XIAOBAI_LOG_LEVEL as LogLevel) ?? 'info';
+  const format = process.env.XIAOBAI_LOG_FORMAT === 'json' ? 'json' as const : 'pretty' as const;
+  return new StructuredLogger({
+    level,
+    console: true,
+    consoleFormat: format,
+    file: !!filePath,
+    filePath,
+  });
+}
+
 export class BoundLogger {
   private logger: StructuredLogger;
   private context: Record<string, unknown>;

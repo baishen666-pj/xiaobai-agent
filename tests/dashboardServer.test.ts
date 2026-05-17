@@ -31,8 +31,8 @@ describe('DashboardServer', () => {
     const data = await res.json();
 
     expect(res.status).toBe(200);
-    expect(data.status).toBe('ok');
-    expect(data.clients).toBe(0);
+    expect(data.status).toBe('healthy');
+    expect(data.details.clients).toBe(0);
   });
 
   it('accepts WebSocket connections', async () => {

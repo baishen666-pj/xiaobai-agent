@@ -43,3 +43,15 @@ export { extractSymbolsAST, type ASTExtractionResult } from './tools/ast-symbols
 export type { MessageContent, ContentPart, TextPart, ImagePart } from './types/content-types.js';
 export { Tracer, Span } from './telemetry/tracer.js';
 export type { TelemetryConfig, SpanOptions, SpanData, TraceExport, SpanContext, SpanEvent, SpanKind, SpanStatus } from './telemetry/types.js';
+export { WorkflowRegistry } from './workflow/registry.js';
+export { WorkflowEngine } from './workflow/engine.js';
+export type { WorkflowEngineEvent, WorkflowEngineOptions } from './workflow/engine.js';
+export { WorkflowTriggerManager } from './workflow/triggers.js';
+export { WorkflowDefinitionSchema, WorkflowStepSchema, WorkflowTriggerSchema } from './workflow/types.js';
+export type { WorkflowDefinition, WorkflowStep, WorkflowTrigger, WorkflowRun, StepResult, WorkflowRunStatus } from './workflow/types.js';
+export { renderTemplate, evaluateCondition } from './workflow/template.js';
+export { GracefulShutdown } from './server/graceful.js';
+export type { Shutdownable } from './server/graceful.js';
+export { HealthChecker } from './server/health.js';
+export type { HealthStatus as ServerHealthStatus, HealthResult } from './server/health.js';
+export { createProduction } from './core/logger.js';

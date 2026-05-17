@@ -467,3 +467,138 @@ export function registerPluginsCommand(program: Command): Command {
 
   return program;
 }
+
+function collect(val: string, prev: string[]): string[] {
+  return [...prev, val];
+}
+
+export function registerWorkflowCommand(program: Command): Command {
+  const workflowCmd = program
+    .command('workflow')
+    .description('Manage and run workflows');
+
+  workflowCmd
+    .addCommand(
+      new Command('list')
+        .description('List available workflows')
+        .action(async () => {
+          const { WorkflowRegistry } = await import('../workflow/registry.js');
+          const { homedir } = await import('node:os');
+          const { join } = await import('node:path');
+          const registry = new WorkflowRegistry(join(homedir(), '.xiaobai', 'default'));
+          await registry.loadAll();
+          const list = registry.list();
+          if (list.length === 0) {
+            console.log(chalk.gray('No workflows found. Create one with: xiaobai workflow create <name>'));
+            return;
+          }
+          console.log(chalk.cyan.bold(`\n  Workflows (${list.length})\n`));
+          for (const wf of list) {
+            const tags = wf.tags.length > 0 ? chalk.gray(` [${wf.tags.join(', ')}]`) : '';
+            console.log(`  ${chalk.yellow(wf.name.padEnd(24))} v${wf.version} ${wf.description ?? ''}${tags}`);
+          }
+          console.log();
+        }),
+    );
+
+  workflowCmd
+    .addCommand(
+      new Command('show <name>')
+        .description('Show workflow details')
+        .action(async (name: string) => {
+          const { WorkflowRegistry } = await import('../workflow/registry.js');
+          const { homedir } = await import('node:os');
+          const { join } = await import('node:path');
+          const registry = new WorkflowRegistry(join(homedir(), '.xiaobai', 'default'));
+          await registry.loadAll();
+          const wf = registry.get(name);
+          if (!wf) { console.log(chalk.red(`  Workflow not found: ${name}`)); return; }
+          console.log(chalk.cyan.bold(`\n  ${wf.name} v${wf.version}`));
+          if (wf.description) console.log(chalk.gray(`  ${wf.description}`));
+          console.log(chalk.cyan('\n  Steps:\n'));
+          for (const step of wf.steps) {
+            const deps = step.dependsOn.length > 0 ? chalk.gray(` (after: ${step.dependsOn.join(', ')})`) : '';
+            console.log(`  ${chalk.yellow(step.id.padEnd(16))} ${step.role ?? 'default'}${deps}`);
+            console.log(`  ${' '.repeat(16)} ${chalk.gray(step.prompt.slice(0, 60))}`);
+          }
+          console.log();
+        }),
+    );
+
+  workflowCmd
+    .addCommand(
+      new Command('run <name>')
+        .description('Run a workflow')
+        .option('-v, --var <key=value>', 'Set variable', collect, [])
+        .action(async (name: string, options: { var: string[] }) => {
+          const agent = await XiaobaiAgent.create();
+          const { WorkflowRegistry } = await import('../workflow/registry.js');
+          const { WorkflowEngine } = await import('../workflow/engine.js');
+          const { homedir } = await import('node:os');
+          const { join } = await import('node:path');
+
+          const registry = new WorkflowRegistry(join(homedir(), '.xiaobai', 'default'));
+          await registry.loadAll();
+
+          const variables: Record<string, string> = {};
+          for (const v of options.var) {
+            const eq = v.indexOf('=');
+            if (eq > 0) variables[v.slice(0, eq)] = v.slice(eq + 1);
+          }
+
+          const deps = agent.getDeps();
+          const engine = new WorkflowEngine(deps, registry);
+
+          console.log(chalk.cyan(`\n  Running workflow: ${name}`));
+
+          const run = await engine.run(name, variables, {
+            onEvent: (event) => {
+              switch (event.type) {
+                case 'step_started':
+                  console.log(chalk.gray(`  → ${event.stepId}`));
+                  break;
+                case 'step_completed':
+                  console.log(chalk.green(`  ✓ ${event.stepId} (${event.result.durationMs}ms)`));
+                  break;
+                case 'step_failed':
+                  console.log(chalk.red(`  ✗ ${event.stepId}: ${event.error}`));
+                  break;
+                case 'step_skipped':
+                  console.log(chalk.yellow(`  ⊘ ${event.stepId}: ${event.reason}`));
+                  break;
+              }
+            },
+          });
+
+          const status = run.status === 'completed' ? chalk.green('completed') :
+            run.status === 'failed' ? chalk.red('failed') : chalk.yellow(run.status);
+          console.log(`\n  Status: ${status}`);
+          if (run.completedAt) {
+            console.log(chalk.gray(`  Duration: ${run.completedAt - run.startedAt}ms`));
+          }
+          console.log();
+        }),
+    );
+
+  workflowCmd
+    .addCommand(
+      new Command('validate <file>')
+        .description('Validate a workflow YAML file')
+        .action(async (file: string) => {
+          const { readFileSync } = await import('node:fs');
+          const { parse } = await import('yaml');
+          const { WorkflowDefinitionSchema } = await import('../workflow/types.js');
+          try {
+            const content = readFileSync(file, 'utf-8');
+            const parsed = parse(content);
+            WorkflowDefinitionSchema.parse(parsed);
+            console.log(chalk.green('  Workflow definition is valid.'));
+          } catch (err) {
+            console.log(chalk.red(`  Invalid: ${(err as Error).message}`));
+            process.exit(1);
+          }
+        }),
+    );
+
+  return program;
+}

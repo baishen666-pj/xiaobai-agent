@@ -11,6 +11,7 @@ import {
   registerAgentsCommand,
   registerSkillsCommand,
   registerPluginsCommand,
+  registerWorkflowCommand,
 } from './commands.js';
 
 const program = new Command();
@@ -18,7 +19,7 @@ const program = new Command();
 program
   .name('xiaobai')
   .description('Xiaobai - A fusion AI agent combining the best of Hermes, OpenClaw, Claude Code, and Codex')
-  .version('0.5.0');
+  .version('0.6.0');
 
 registerChatCommand(program);
 registerExecCommand(program);
@@ -29,6 +30,7 @@ registerRunCommand(program);
 registerAgentsCommand(program);
 registerSkillsCommand(program);
 registerPluginsCommand(program);
+registerWorkflowCommand(program);
 
 export { program };
 

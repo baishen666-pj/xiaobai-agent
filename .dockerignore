@@ -1,0 +1,13 @@
+node_modules
+dist
+.git
+.gitignore
+tests
+docs
+coverage
+*.md
+!README.md
+.env
+.xiaobai
+.vscode
+.idea

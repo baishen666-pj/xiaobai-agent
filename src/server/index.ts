@@ -13,6 +13,9 @@ import { AgentSession } from './agent-session.js';
 import type { AgentDeps } from '../core/agent.js';
 import type { LoopEvent } from '../core/loop.js';
 import type { Tracer } from '../telemetry/tracer.js';
+import { GracefulShutdown, type Shutdownable } from './graceful.js';
+import { HealthChecker } from './health.js';
+import type { ApiGateway } from './gateway.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -63,6 +66,8 @@ export class DashboardServer {
   private sseHeartbeatMs: number;
   private sseClientIdCounter = 0;
   private tracer?: Tracer;
+  private healthChecker: HealthChecker;
+  private gateway?: ApiGateway;
 
   constructor(options: DashboardServerOptions = {}) {
     this.port = options.port ?? 3001;
@@ -74,6 +79,7 @@ export class DashboardServer {
     this.sseEnabled = options.sseEnabled ?? false;
     this.sseHeartbeatMs = options.sseHeartbeatMs ?? 30000;
     this.tracer = options.tracer;
+    this.healthChecker = new HealthChecker(options.agentDeps);
 
     this.httpServer = createServer((req, res) => {
       this.handleRequest(req, res);
@@ -132,15 +138,37 @@ export class DashboardServer {
   private async handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const url = req.url?.split('?')[0] ?? '/';
 
+    // Liveness probe must be accessible without auth for health checks
+    if (url === '/health/live') {
+      const result = this.healthChecker.liveness();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result));
+      return;
+    }
+
     if (!this.checkAuth(req)) {
       res.writeHead(401, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Unauthorized' }));
       return;
     }
 
+    if (this.gateway) {
+      const handled = await this.gateway.getRouter().handle(req, res);
+      if (handled) return;
+    }
+
     if (url === '/health') {
+      const result = await this.healthChecker.check();
+      result.details = { ...result.details, clients: this.bridge.getClientCount() };
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ status: 'ok', clients: this.bridge.getClientCount() }));
+      res.end(JSON.stringify(result));
+      return;
+    }
+
+    if (url === '/health/ready') {
+      const { ready, checks } = await this.healthChecker.readiness();
+      res.writeHead(ready ? 200 : 503, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ready, checks }));
       return;
     }
 
@@ -238,6 +266,10 @@ export class DashboardServer {
     this.tracer = tracer;
   }
 
+  setGateway(gateway: ApiGateway): void {
+    this.gateway = gateway;
+  }
+
   attachOrchestrator(orchestrator: Orchestrator): () => void {
     const listener = (event: OrchestratorEvent) => {
       this.bridge.broadcast(event);
@@ -271,6 +303,21 @@ export class DashboardServer {
     return new Promise((resolve) => {
       this.httpServer.close(() => resolve());
     });
+  }
+
+  registerShutdownHooks(deps?: AgentDeps): () => void {
+    const shutdown = new GracefulShutdown();
+    const self: Shutdownable = { name: 'server', stop: () => this.stop() };
+    shutdown.register(self);
+
+    if (deps?.plugins) {
+      shutdown.register({ name: 'plugins', stop: () => deps.plugins!.deactivateAll() });
+    }
+    if (deps?.mcp) {
+      shutdown.register({ name: 'mcp', stop: () => deps.mcp!.disconnectAll() });
+    }
+
+    return shutdown.install();
   }
 
   getBridge(): EventBridge {
