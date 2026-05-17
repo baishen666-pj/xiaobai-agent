@@ -7,6 +7,10 @@ import { fileURLToPath } from 'node:url';
 import { EventBridge } from './eventBridge.js';
 import type { Orchestrator, OrchestratorEvent } from '../core/orchestrator.js';
 import { createAuthChecker, type AuthConfig } from '../security/auth.js';
+import { isClientMessage, type ClientMessage } from './client-messages.js';
+import { AgentSession } from './agent-session.js';
+import type { AgentDeps } from '../core/agent.js';
+import type { LoopEvent } from '../core/loop.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -37,6 +41,7 @@ export interface DashboardServerOptions {
   host?: string;
   staticDir?: string;
   auth?: AuthConfig;
+  agentDeps?: AgentDeps;
 }
 
 export class DashboardServer {
@@ -47,6 +52,8 @@ export class DashboardServer {
   private host: string;
   private staticDir: string;
   private checkAuth: (req: IncomingMessage) => boolean;
+  private agentDeps?: AgentDeps;
+  private clientSessions = new Map<import('ws').WebSocket, AgentSession>();
 
   constructor(options: DashboardServerOptions = {}) {
     this.port = options.port ?? 3001;
@@ -54,6 +61,7 @@ export class DashboardServer {
     this.staticDir = resolveStaticDir(options.staticDir);
     this.checkAuth = createAuthChecker(options.auth ?? {});
     this.bridge = new EventBridge();
+    this.agentDeps = options.agentDeps;
 
     this.httpServer = createServer((req, res) => {
       this.handleRequest(req, res);
@@ -69,13 +77,42 @@ export class DashboardServer {
 
       this.bridge.addClient(ws);
 
-      ws.on('message', (data) => {
+      ws.on('message', async (data) => {
         try {
           const msg = JSON.parse(data.toString());
           if (msg.type === 'ping') {
             ws.send(JSON.stringify({ type: 'pong', timestamp: Date.now() }));
+            return;
+          }
+
+          if (!isClientMessage(msg)) return;
+
+          const session = this.clientSessions.get(ws);
+          if (session) {
+            const ack = await session.handleClientMessage(msg as ClientMessage);
+            if (ack) ws.send(JSON.stringify(ack));
+            return;
+          }
+
+          if (!this.agentDeps) return;
+
+          if (msg.type === 'task_start' || msg.type === 'session_create') {
+            const newSession = new AgentSession(this.agentDeps, '', (event) => {
+              this.bridge.broadcast(this.toChatEvent(newSession.getSessionId(), event));
+            });
+            this.clientSessions.set(ws, newSession);
+            const ack = await newSession.handleClientMessage(msg as ClientMessage);
+            if (ack) ws.send(JSON.stringify(ack));
           }
         } catch (err) { console.error('[server] Error:', err); }
+      });
+
+      ws.on('close', () => {
+        const session = this.clientSessions.get(ws);
+        if (session) {
+          session.destroy();
+          this.clientSessions.delete(ws);
+        }
       });
     });
   }
@@ -175,4 +212,23 @@ export class DashboardServer {
   getPort(): number {
     return this.port;
   }
+
+  private toChatEvent(sessionId: string, event: LoopEvent): any {
+    switch (event.type) {
+      case 'text':
+      case 'stream':
+        return { type: 'chat_turn', sessionId, content: event.content, tokens: event.tokens ?? 0 };
+      case 'tool_call':
+        return { type: 'chat_tool_call', sessionId, toolName: event.toolName ?? 'unknown' };
+      case 'tool_result':
+        return { type: 'chat_tool_result', sessionId, toolName: event.toolName ?? 'unknown', success: event.result?.success ?? false, output: event.content };
+      case 'stop':
+        return { type: 'chat_stop', sessionId, reason: event.content, totalTokens: event.tokens ?? 0 };
+      case 'error':
+        return { type: 'chat_error', sessionId, error: event.content };
+      default:
+        return { type: 'chat_turn', sessionId, content: event.content, tokens: event.tokens ?? 0 };
+    }
+  }
+
 }

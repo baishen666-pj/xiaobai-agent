@@ -105,6 +105,37 @@ describe('DashboardServer', () => {
     const res = await fetch(`http://localhost:${port}/unknown`);
     expect(res.status).toBe(404);
   });
+
+  it('ignores non-ClientMessage JSON', async () => {
+    const ws = new WebSocket(`ws://localhost:${port}`);
+
+    await new Promise<void>((resolve) => {
+      ws.on('open', () => {
+        ws.send(JSON.stringify({ type: 'random_stuff', data: 42 }));
+        setTimeout(() => {
+          ws.close();
+          resolve();
+        }, 50);
+      });
+    });
+  });
+
+  it('ignores client messages without agentDeps', async () => {
+    const ws = new WebSocket(`ws://localhost:${port}`);
+
+    const response = await new Promise<any>((resolve) => {
+      ws.on('open', () => {
+        ws.send(JSON.stringify({ type: 'session_list' }));
+        ws.on('message', (data) => {
+          resolve(JSON.parse(data.toString()));
+          ws.close();
+        });
+        setTimeout(() => resolve(null), 100);
+      });
+    });
+
+    expect(response).toBeNull();
+  });
 });
 
 describe('DashboardServer staticDir resolution', () => {
